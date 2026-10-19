@@ -33,6 +33,9 @@ import {
 import LegacyThreadSidebar from "./LegacySidebar";
 import { useThreadVisitedMigration } from "../hooks/useThreadVisitedMigration";
 import ThreadSidebar from "./Sidebar";
+import WorkspaceSidebar from "../fork/workspaces/WorkspaceSidebar"; // fork:workspaces
+import { ForkWorkspaceDialogHost } from "../fork/workspaces/WorkspaceDialogs"; // fork:workspaces
+import { forkWorkspaceSidebarEnabled } from "../fork/workspaces/registry"; // fork:workspaces
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { SidebarBrandWidthProbe, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { MainAppLocationTracker } from "./sidebar/mainAppLocation";
@@ -349,12 +352,15 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
             </>
           ) : legacySidebarEnabled ? (
             <LegacyThreadSidebar />
+          ) : forkWorkspaceSidebarEnabled() ? ( // fork:workspaces
+            <WorkspaceSidebar /> // fork:workspaces
           ) : (
             <ThreadSidebar />
           )}
           <SidebarRail onDoubleClick={resetSidebarWidth} />
         </Sidebar>
         {children}
+        <ForkWorkspaceDialogHost /> {/* fork:workspaces */}
         <SidebarControl />
         <NavigationHistoryShortcuts />
         <MainAppLocationTracker />

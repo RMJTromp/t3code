@@ -1,0 +1,43 @@
+/*
+ * Braille "working" glyph, like Conductor's. Ten discrete frames per second on one
+ * character; it pauses off screen, in hidden tabs, and under reduced motion
+ * through upstream's visible-animation variables.
+ */
+[data-fork-braille-spinner]::after {
+  content: "⠋";
+  animation: fork-braille 1s steps(1, end) infinite;
+  animation-play-state: var(--visible-animation-state, paused);
+}
+
+@keyframes fork-braille {
+  0% {
+    content: "⠋";
+  }
+  10% {
+    content: "⠙";
+  }
+  20% {
+    content: "⠹";
+  }
+  30% {
+    content: "⠸";
+  }
+  40% {
+    content: "⠼";
+  }
+  50% {
+    content: "⠴";
+  }
+  60% {
+    content: "⠦";
+  }
+  70% {
+    content: "⠧";
+  }
+  80% {
+    content: "⠇";
+  }
+  90% {
+    content: "⠏";
+  }
+}

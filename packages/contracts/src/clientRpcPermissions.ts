@@ -8,9 +8,11 @@ import {
 } from "./auth.ts";
 import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
 import { WS_METHODS } from "./rpc.ts";
+import { FORK_WORKSPACE_CLIENT_SCOPES } from "./fork/workspaces.ts"; // fork:workspaces
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  ...FORK_WORKSPACE_CLIENT_SCOPES, // fork:workspaces
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
   [WS_METHODS.serverCheckOtlpEndpoint]: AuthSettingsWriteScope,
   [WS_METHODS.pullRequestsRunAction]: AuthSourceControlWriteScope,

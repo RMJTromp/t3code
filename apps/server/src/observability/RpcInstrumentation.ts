@@ -1,4 +1,5 @@
 import { ORCHESTRATION_V2_WS_METHODS, WS_METHODS, type WsRpcGroup } from "@t3tools/contracts";
+import { FORK_WORKSPACE_RPC_AGGREGATES } from "@t3tools/contracts"; // fork:workspaces
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as References from "effect/References";
@@ -14,6 +15,7 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
  * even where they differ from the method prefix.
  */
 const RPC_AGGREGATES = {
+  ...FORK_WORKSPACE_RPC_AGGREGATES, // fork:workspaces
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: "orchestrationV2",
   [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: "orchestration",

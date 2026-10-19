@@ -46,6 +46,7 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "./worktreesDirectory.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
+import { forkWorkspaceOwnsPath } from "./fork/workspaces/WorkspaceOwnership.ts"; // fork:workspaces
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
@@ -619,6 +620,7 @@ const make = Effect.gen(function* () {
       const keep = (reason: string) => entries.push({ ...entry, reason: sentence(reason) });
       yield* Effect.gen(function* () {
         if (!(yield* fs.exists(worktreePath))) return;
+        if (yield* forkWorkspaceOwnsPath(worktreePath)) return keep("belongs to a workspace"); // fork:workspaces
         if (deleted && !settings.worktreeOnDelete) return keep("no rules apply");
         if (group.length > 1 && worktreeOwner(group) === undefined)
           return keep(`shared by ${group.length} threads`);

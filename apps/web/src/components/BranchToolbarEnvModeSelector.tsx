@@ -23,6 +23,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { useAtomValue } from "@effect/atom-react";
 import { shortcutLabelForCommand } from "../keybindings";
 import { primaryServerKeybindingsAtom } from "../state/server";
+import { useIsWorkspacePath } from "../fork/workspaces/state"; // fork:workspaces
 
 const PREVIOUS_WORKTREE_SELECT_VALUE = "previous-worktree";
 
@@ -48,6 +49,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   onUsePreviousWorktree,
 }: BranchToolbarEnvModeSelectorProps) {
   const composerFloatingLayerProps = useComposerMenuProps();
+  const inWorkspace = useIsWorkspacePath(activeWorktreePath); // fork:workspaces
   const shortcutLabel = shortcutLabelForCommand(
     useAtomValue(primaryServerKeybindingsAtom),
     "composer.workspace",
@@ -70,7 +72,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
     }
   };
 
-  if (envLocked || forceNewWorktree) {
+  if (envLocked || forceNewWorktree || inWorkspace /* fork:workspaces */) {
     const lockedRow = (
       <span
         className="inline-flex h-7 min-w-0 items-center gap-1 border border-transparent px-1.75 font-normal text-muted-foreground/70 text-xs sm:h-6"

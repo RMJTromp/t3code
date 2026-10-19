@@ -1,5 +1,6 @@
 import {
   CLIENT_GUARDED_RPC_SCOPES,
+  FORK_WORKSPACE_READ_SCOPES, // fork:workspaces
   type DeviceListInput,
   clientRpcRequiredScopes,
   authScopeRequiredResponse,
@@ -38,6 +39,7 @@ import type * as RpcGroup from "effect/rpc/RpcGroup";
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
 export const RPC_REQUIRED_SCOPES = {
+  ...FORK_WORKSPACE_READ_SCOPES, // fork:workspaces
   ...CLIENT_GUARDED_RPC_SCOPES,
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: AuthOrchestrationReadScope,

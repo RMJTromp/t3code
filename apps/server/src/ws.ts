@@ -210,6 +210,7 @@ import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import { projectMutationOperation } from "./project/ProjectMutation.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
+import { makeForkWorkspaceHandlers } from "./fork/workspaces/layer.ts"; // fork:workspaces
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
@@ -1788,7 +1789,9 @@ const layerWsRpc = (
         return result;
       });
 
+      const forkWorkspaceHandlers = yield* makeForkWorkspaceHandlers; // fork:workspaces
       const handlers = ServerWsRpcGroup.of({
+        ...forkWorkspaceHandlers, // fork:workspaces
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,

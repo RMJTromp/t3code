@@ -22,6 +22,7 @@ import {
   ChatGptHandoffState,
 } from "./providerSetup.ts";
 import * as Schema from "effect/Schema";
+import { ForkWorkspaceRpcs } from "./fork/workspaces.ts"; // fork:workspaces
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
@@ -1853,6 +1854,7 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
 ) {}
 
 export const WsRpcGroup = RpcGroup.make(
+  ...ForkWorkspaceRpcs, // fork:workspaces
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,

@@ -52,6 +52,7 @@ import { clearThreadPreviewState } from "../previewStateStore";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
+import { forkReleasableWorktree } from "../fork/workspaces/registry"; // fork:workspaces
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useClientSettings } from "./useSettings";
 import * as ThreadUndo from "./threadUndo";
@@ -435,9 +436,10 @@ export function useThreadActions() {
       deletedIds && deletedIds.size > 0
         ? threads.filter((entry) => entry.id === threadRef.threadId || !deletedIds.has(entry.id))
         : threads;
-    const orphanedWorktreePath = getOrphanedWorktreePathForThread(
-      survivingThreads,
-      threadRef.threadId,
+    const orphanedWorktreePath = forkReleasableWorktree(
+      // fork:workspaces
+      threadRef.environmentId,
+      getOrphanedWorktreePathForThread(survivingThreads, threadRef.threadId),
     );
     const displayWorktreePath = orphanedWorktreePath
       ? formatWorktreePathForDisplay(orphanedWorktreePath)

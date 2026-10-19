@@ -41,6 +41,7 @@ import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
 import { useThreadRouteTarget } from "./useThreadRouteTarget";
+import { forkInterceptNewThread, withForkDraftSlot } from "../fork/workspaces/interceptNewThread"; // fork:workspaces
 
 interface NewThreadWorkspaceOptions {
   branch?: string | null;
@@ -74,6 +75,8 @@ export function useNewThreadHandler() {
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
       replace?: boolean;
+      draftSlot?: string; // fork:workspaces
+      threadId?: ThreadId; // fork:workspaces
     },
   ): Promise<{ draftId: DraftId; threadId: ThreadId } | null> => {
     const projects = readProjects();
@@ -95,6 +98,9 @@ export function useNewThreadHandler() {
     const requestingRouteHref = router.state.location.href;
     const routeChangedSinceRequest = () => router.state.location.href !== requestingRouteHref;
     const currentRouteTarget = getCurrentRouteTarget();
+    const forked = forkInterceptNewThread(projectRef, options, currentRouteTarget); // fork:workspaces
+    if (forked.kind === "handled") return Promise.resolve(null); // fork:workspaces
+    options = forked.options; // fork:workspaces
     const carrySourceShell =
       currentRouteTarget?.kind === "server" ? readThreadShell(currentRouteTarget.threadRef) : null;
     const carrySourceDraft =
@@ -160,9 +166,13 @@ export function useNewThreadHandler() {
         ),
       });
     };
-    const logicalProjectKey = project
-      ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
-      : scopedProjectKey(projectRef);
+    const logicalProjectKey = withForkDraftSlot(
+      // fork:workspaces
+      project
+        ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
+        : scopedProjectKey(projectRef),
+      options,
+    );
     const hasBranchOption = options?.branch !== undefined;
     const hasWorktreePathOption = options?.worktreePath !== undefined;
     const hasEnvModeOption = options?.envMode !== undefined;
@@ -322,7 +332,7 @@ export function useNewThreadHandler() {
     }
 
     const draftId = newDraftId();
-    const threadId = newThreadId();
+    const threadId = options?.threadId ?? newThreadId(); // fork:workspaces
     const createdAt = new Date().toISOString();
     return (async () => {
       const initialEnvMode = options?.envMode ?? (await resolveDefaultEnvMode());

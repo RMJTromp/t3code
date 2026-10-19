@@ -1,0 +1,119 @@
+import { ProjectId, WorkspaceId, type Workspace } from "@t3tools/contracts";
+import { describe, expect, it } from "vite-plus/test";
+
+import {
+  accumulateWorkspaceLog,
+  neighbourAfterClose,
+  routeNewThread,
+  threadsForWorkspace,
+  unassignedProjectThreads,
+  workspaceDraftSlot,
+} from "./logic";
+
+const projectId = ProjectId.make("project-1");
+
+function workspace(overrides: Partial<Workspace> = {}): Workspace {
+  return {
+    id: WorkspaceId.make("ws-oslo"),
+    projectId,
+    name: "oslo",
+    worktreePath: "/worktrees/repo/oslo",
+    branch: "oslo",
+    baseRef: "main",
+    status: "ready",
+    pendingOperation: null,
+    error: null,
+    lastScript: null,
+    setupTerminal: null,
+    createdAt: "2026-10-19T00:00:00.000Z",
+    archivedAt: null,
+    ...overrides,
+  };
+}
+
+const thread = (
+  id: string,
+  worktreePath: string | null,
+  overrides: { archivedAt?: string | null; createdAt?: string; projectId?: ProjectId } = {},
+) => ({
+  id,
+  projectId: overrides.projectId ?? projectId,
+  worktreePath,
+  archivedAt: overrides.archivedAt ?? null,
+  createdAt: overrides.createdAt ?? "2026-10-19T00:00:00.000Z",
+});
+
+describe("threadsForWorkspace", () => {
+  it("matches live project threads in the workspace folder, oldest first", () => {
+    const threads = [
+      thread("later", "/worktrees/repo/oslo/", { createdAt: "2026-10-19T02:00:00.000Z" }),
+      thread("earlier", "/worktrees/repo/oslo", { createdAt: "2026-10-19T01:00:00.000Z" }),
+      thread("archived", "/worktrees/repo/oslo", { archivedAt: "2026-10-19T03:00:00.000Z" }),
+      thread("other-project", "/worktrees/repo/oslo", { projectId: ProjectId.make("other") }),
+      thread("root", "/repo"),
+    ];
+    expect(threadsForWorkspace(threads, workspace()).map((entry) => entry.id)).toEqual([
+      "earlier",
+      "later",
+    ]);
+    expect(unassignedProjectThreads(threads, projectId, [workspace()]).map((t) => t.id)).toEqual([
+      "root",
+    ]);
+  });
+});
+
+describe("routeNewThread", () => {
+  const base = {
+    isScratchProject: false,
+    projectId,
+    requestedWorktreePath: undefined,
+    currentWorktreePath: null,
+    workspaces: [workspace()],
+  };
+
+  it("keeps projectless chats and unrelated explicit worktrees upstream", () => {
+    expect(routeNewThread({ ...base, isScratchProject: true })).toEqual({ kind: "upstream" });
+    expect(routeNewThread({ ...base, requestedWorktreePath: "/elsewhere" })).toEqual({
+      kind: "upstream",
+    });
+  });
+
+  it("stays in the workspace being viewed, otherwise asks for one", () => {
+    expect(routeNewThread({ ...base, currentWorktreePath: "/worktrees/repo/oslo/" })).toEqual({
+      kind: "workspace",
+      workspace: workspace(),
+    });
+    expect(routeNewThread(base)).toEqual({ kind: "choose-workspace" });
+    expect(
+      routeNewThread({
+        ...base,
+        currentWorktreePath: "/worktrees/repo/oslo",
+        workspaces: [workspace({ status: "archived" })],
+      }),
+    ).toEqual({ kind: "choose-workspace" });
+  });
+
+  it("gives two workspaces in one project separate draft slots", () => {
+    expect(workspaceDraftSlot(workspace())).not.toEqual(
+      workspaceDraftSlot(workspace({ id: WorkspaceId.make("ws-lima") })),
+    );
+  });
+});
+
+describe("accumulateWorkspaceLog", () => {
+  it("restarts on a snapshot and appends otherwise", () => {
+    const appended = accumulateWorkspaceLog("$ setup\n", { type: "append", text: "ok\n" });
+    expect(appended).toBe("$ setup\nok\n");
+    expect(accumulateWorkspaceLog(appended, { type: "snapshot", text: "$ archive\n" })).toBe(
+      "$ archive\n",
+    );
+  });
+});
+
+describe("neighbourAfterClose", () => {
+  it("moves to the next tab, else the previous, else nowhere", () => {
+    expect(neighbourAfterClose(["a", "b", "c"], "b")).toBe("c");
+    expect(neighbourAfterClose(["a", "b", "c"], "c")).toBe("b");
+    expect(neighbourAfterClose(["a"], "a")).toBeNull();
+  });
+});

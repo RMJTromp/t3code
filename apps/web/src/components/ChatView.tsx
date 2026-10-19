@@ -333,6 +333,7 @@ import {
   useComposerDraftStore,
   DraftId,
 } from "../composerDraftStore";
+import { WorkspaceTabs } from "../fork/workspaces/WorkspaceTabs"; // fork:workspaces
 import {
   formatTerminalContextLabel,
   type TerminalContextDraft,
@@ -7890,6 +7891,8 @@ export default function ChatView(props: ChatViewProps) {
               : {})}
           />
         </header>
+        {/* fork:workspaces */}
+        <WorkspaceTabs environmentId={environmentId} threadId={threadId} draftId={draftId} />
 
         <div className="relative flex min-h-0 min-w-0 flex-1">
           <ThreadFindCanvas

@@ -7,6 +7,7 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   WS_METHODS,
 } from "@t3tools/contracts";
+import type { FORK_WORKSPACE_WS_METHODS } from "@t3tools/contracts"; // fork:workspaces
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -48,6 +49,8 @@ export type EnvironmentRpcTag = keyof WsRpcProtocolClient & string;
 type RpcMethod<TTag extends EnvironmentRpcTag> = WsRpcProtocolClient[TTag];
 
 export type EnvironmentSubscriptionRpcTag =
+  | typeof FORK_WORKSPACE_WS_METHODS.forkSubscribeWorkspaces // fork:workspaces
+  | typeof FORK_WORKSPACE_WS_METHODS.forkSubscribeWorkspaceLog // fork:workspaces
   | typeof WS_METHODS.codexAuthCallbackSubscribe
   | typeof WS_METHODS.providerAuthSubscribe
   | typeof WS_METHODS.providerInstallSubscribe

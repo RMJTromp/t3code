@@ -2,6 +2,8 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { forkGuardWorktreeRemoval } from "../fork/workspaces/WorkspaceOwnership.ts"; // fork:workspaces
+
 import {
   GitManagerError,
   GitCommandError,
@@ -394,6 +396,7 @@ export const make = Effect.gen(function* () {
       ),
     removeWorktree: (input) =>
       ensureGitCommand("GitWorkflowService.removeWorktree", input.cwd).pipe(
+        Effect.andThen(forkGuardWorktreeRemoval(input)), // fork:workspaces
         Effect.andThen(git.removeWorktree(input)),
       ),
     pruneWorktrees: (input) =>

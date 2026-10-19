@@ -371,6 +371,11 @@ describe("WorkspaceService", () => {
           scriptDone(workspace),
       );
       assert.equal(reopened.lastScript?.exitCode, 3);
+      // No setup script: only the archive script ever opened a terminal, never the chat's.
+      assert.deepEqual(
+        fixture.terminals.filter((terminal) => terminal.endsWith("/workspace-setup")),
+        [],
+      );
       assert.isNotNull(reopened.error);
       assert.isTrue(NodeFS.existsSync(reopened.worktreePath));
 

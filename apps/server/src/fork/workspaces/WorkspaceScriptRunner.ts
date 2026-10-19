@@ -43,7 +43,9 @@ function completionShell(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): Com
 /**
  * Same wrapping as upstream's setup runner: the shell reads the whole block
  * before running it, so the script cannot swallow the sentinel, and the
- * sentinel carries the exit code.
+ * sentinel carries the exit code. Unlike upstream, the user sees only their
+ * script: the screen (shell startup noise and the echoed wrapper) is cleared
+ * first, and the sentinel line is erased right after it is printed.
  */
 export function wrapWorkspaceCommand(
   command: string,
@@ -51,13 +53,15 @@ export function wrapWorkspaceCommand(
   sentinel: string,
 ): string {
   const body = command.replace(/\r?\n/g, "\r");
+  const clearScreen = "printf '\\033[3J\\033[H\\033[2J'";
+  const hideSentinel = "\\r\\033[2K\\033[1A";
   switch (shell) {
     case "powershell":
-      return `$global:LASTEXITCODE = $null; & {\r${body}\r}; if ($null -ne $LASTEXITCODE) { $__t3c = $LASTEXITCODE } elseif ($?) { $__t3c = 0 } else { $__t3c = 1 }; Write-Host "${sentinel}$__t3c"`;
+      return `Clear-Host; $global:LASTEXITCODE = $null; & {\r${body}\r}; if ($null -ne $LASTEXITCODE) { $__t3c = $LASTEXITCODE } elseif ($?) { $__t3c = 0 } else { $__t3c = 1 }; Write-Host "${sentinel}$__t3c"`;
     case "fish":
-      return `begin\r${body}\rend; printf '\\n${sentinel}%s\\n' $status`;
+      return `${clearScreen}; begin\r${body}\rend; printf '\\n${sentinel}%s${hideSentinel}' $status`;
     case "posix":
-      return `( ${body}\r); printf '\\n${sentinel}%s\\n' "$?"`;
+      return `${clearScreen}; ( ${body}\r); printf '\\n${sentinel}%s${hideSentinel}' "$?"`;
   }
 }
 

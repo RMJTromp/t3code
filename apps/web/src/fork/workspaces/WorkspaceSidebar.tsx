@@ -322,7 +322,12 @@ function WorkspaceRow({
   const { open } = useOpenWorkspace();
   const attentionOf = useThreadAttention();
   const attention = members.map(attentionOf);
-  const working = attention.some((entry) => entry.working) || workspace.status === "creating";
+  // Creating, archiving, or a running setup or archive script count as busy, like an agent.
+  const working =
+    attention.some((entry) => entry.working) ||
+    workspace.status === "creating" ||
+    workspace.status === "archiving" ||
+    workspace.lastScript?.phase === "running";
   const unread = attention.some((entry) => entry.unread);
   const failed = workspace.status === "failed" || workspace.error !== null;
   const target = { environmentId, workspaceId: workspace.id };

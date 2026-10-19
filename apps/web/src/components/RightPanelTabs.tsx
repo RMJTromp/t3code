@@ -1385,13 +1385,13 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       </SurfaceMenuItem>
                     );
                   })}
+                  {/* fork:workspaces */}
+                  <ForkRunScriptMenu variant="submenu" />
                 </MenuPopup>
               </Menu>
             ) : null}
           </div>
         </ScrollArea>
-        {/* fork:workspaces */}
-        <ForkRunScriptMenu variant="tab" />
         {tabScrollState.hasOverflow ? (
           <div
             className="flex shrink-0 items-center gap-0.5 [-webkit-app-region:no-drag]"

@@ -1,20 +1,37 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { useNavigate } from "@tanstack/react-router";
 import type { ProjectExtraScript, ThreadId, Workspace } from "@t3tools/contracts";
-import { ChevronDownIcon, PlayIcon } from "lucide-react";
+import { ChevronDownIcon, PlayIcon, PlusIcon } from "lucide-react";
 
 import { Button } from "../../components/ui/button";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../components/ui/menu";
+import {
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
+  MenuTrigger,
+} from "../../components/ui/menu";
+import { type ReactNode, useState } from "react";
+import { useClientSettings } from "../../hooks/useSettings";
+import {
+  deriveLogicalProjectKeyFromSettings,
+  selectProjectGroupingSettings,
+} from "../../logicalProject";
 import { useRightPanelStore } from "../../rightPanelStore";
+import { readProject } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { forkWorkspaceEnvironment, useProjectWorkspaceScripts, useWorkspaceForPath } from "./state";
 import { useActiveWorkspaceLocation } from "./useActiveWorkspaceLocation";
 import { workspaceAcceptsChats } from "./logic";
 
 /**
- * The right panel's "Run script" menu, in its tab bar and on its empty screen.
- * Renders nothing outside a workspace or when the project has no extra scripts.
+ * The right panel's "Run script" menu: a submenu of the tab bar's "+" menu, and a
+ * row on its empty screen.
+ * Renders nothing outside a workspace.
  */
-export function RunScriptMenu({ variant }: { variant: "tab" | "empty" }) {
+export function RunScriptMenu({ variant }: { variant: "submenu" | "empty" }) {
   const active = useActiveWorkspaceLocation();
   const workspace = useWorkspaceForPath(active.environmentId, active.worktreePath);
   const { scripts } = useProjectWorkspaceScripts(
@@ -22,13 +39,14 @@ export function RunScriptMenu({ variant }: { variant: "tab" | "empty" }) {
     workspace?.projectId ?? null,
   );
   const command = useAtomCommand(forkWorkspaceEnvironment.command);
+  const navigate = useNavigate();
+  const groupingSettings = useClientSettings(selectProjectGroupingSettings);
   const runnable = scripts.filter((script) => script.command.trim().length > 0);
   if (
     active.environmentId === null ||
     active.viewedThreadId === null ||
     workspace === null ||
-    !workspaceAcceptsChats(workspace) ||
-    runnable.length === 0
+    !workspaceAcceptsChats(workspace)
   ) {
     return null;
   }
@@ -48,7 +66,26 @@ export function RunScriptMenu({ variant }: { variant: "tab" | "empty" }) {
     });
   };
 
-  const items = runnable.map((script) => (
+  const openScriptSettings = () => {
+    const project = readProject(scopeProjectRef(environmentId, workspace.projectId));
+    if (project === null) return;
+    void navigate({
+      to: "/settings/projects",
+      search: {
+        project: deriveLogicalProjectKeyFromSettings(project, groupingSettings),
+        machine: undefined,
+      },
+      hash: "workspace-scripts",
+    });
+  };
+
+  const addScriptItem = (
+    <MenuItem onClick={openScriptSettings}>
+      <PlusIcon />
+      Add a script…
+    </MenuItem>
+  );
+  const scriptItems = runnable.map((script) => (
     <MenuItem key={script.id} onClick={() => run(script)}>
       <PlayIcon />
       <span className="min-w-0 truncate">{script.name.trim() || "Untitled script"}</span>
@@ -57,39 +94,53 @@ export function RunScriptMenu({ variant }: { variant: "tab" | "empty" }) {
       ) : null}
     </MenuItem>
   ));
+  const items = runnable.length === 0 ? addScriptItem : scriptItems;
 
-  if (variant === "tab") {
+  if (variant === "submenu") {
     return (
-      <Menu>
-        <MenuTrigger render={<Button size="xs" variant="ghost-muted" className="shrink-0" />}>
+      <MenuSub>
+        <MenuSubTrigger>
           <PlayIcon />
           Run script
-          <ChevronDownIcon />
+        </MenuSubTrigger>
+        <MenuSubPopup className="max-w-56">{items}</MenuSubPopup>
+      </MenuSub>
+    );
+  }
+  return <EmptyScreenRow items={items} />;
+}
+
+/** Mirrors the Browser row on upstream's empty screen: the row opens the menu under its chevron. */
+function EmptyScreenRow({ items }: { items: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="group relative">
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-2.5 text-left text-sm transition-colors group-hover:bg-accent/60"
+      >
+        <PlayIcon className="size-4" />
+        <span className="min-w-0 flex-1 truncate pr-7">Run script</span>
+      </button>
+      <Menu open={open} onOpenChange={setOpen}>
+        <MenuTrigger
+          render={
+            <Button
+              aria-label="Choose a script"
+              className="absolute top-1/2 right-8 -translate-y-1/2"
+              size="icon-xs"
+              variant="ghost-muted"
+            />
+          }
+        >
+          <ChevronDownIcon className="size-3.5" />
         </MenuTrigger>
-        <MenuPopup align="end" side="bottom" sideOffset={6}>
+        <MenuPopup align="end" side="bottom" sideOffset={6} className="max-w-56">
           {items}
         </MenuPopup>
       </Menu>
-    );
-  }
-  return (
-    <Menu>
-      <MenuTrigger
-        render={
-          <button
-            type="button"
-            className="mt-0.5 flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-2.5 text-left text-sm transition-colors hover:bg-accent/60"
-          />
-        }
-      >
-        <PlayIcon className="size-4" />
-        <span className="min-w-0 flex-1 truncate">Run script</span>
-        <ChevronDownIcon className="size-3.5 text-muted-foreground" />
-      </MenuTrigger>
-      <MenuPopup align="start" side="bottom" sideOffset={6}>
-        {items}
-      </MenuPopup>
-    </Menu>
+    </div>
   );
 }
 

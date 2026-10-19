@@ -11,13 +11,11 @@ interface ForkWorkspaceDialogState {
     readonly environmentId: EnvironmentId | null;
     readonly projectId: ProjectId | null;
   } | null;
-  readonly archive: WorkspaceTarget | null;
   readonly log: WorkspaceTarget | null;
 }
 
 export const useForkWorkspaceDialogs = create<ForkWorkspaceDialogState>(() => ({
   newWorkspace: null,
-  archive: null,
   log: null,
 }));
 
@@ -30,10 +28,6 @@ export function openNewWorkspaceDialog(
       projectId: preset?.projectId ?? null,
     },
   });
-}
-
-export function openArchiveWorkspaceDialog(target: WorkspaceTarget): void {
-  useForkWorkspaceDialogs.setState({ archive: target });
 }
 
 export function openWorkspaceLog(target: WorkspaceTarget): void {

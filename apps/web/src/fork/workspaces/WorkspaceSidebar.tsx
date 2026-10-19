@@ -31,16 +31,11 @@ import {
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useScratchProject } from "../../hooks/useScratchProject";
 import { cn } from "../../lib/utils";
-import { useAtomCommand } from "../../state/use-atom-command";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
-import {
-  openArchiveWorkspaceDialog,
-  openNewWorkspaceDialog,
-  openWorkspaceLog,
-} from "./dialogStore";
+import { openNewWorkspaceDialog, openWorkspaceLog } from "./dialogStore";
 import {
   compactRelativeTime,
   sameWorkspacePath,
@@ -48,8 +43,9 @@ import {
   unassignedProjectThreads,
   workspaceLastActivity,
 } from "./logic";
-import { forkWorkspaceEnvironment, useEnvironmentWorkspaces } from "./state";
+import { useEnvironmentWorkspaces } from "./state";
 import { useActiveWorkspaceLocation } from "./useActiveWorkspaceLocation";
+import { useArchiveWorkspace } from "./useArchiveWorkspace";
 import { useCreateWorkspace, useOpenWorkspace } from "./useOpenWorkspace";
 import { type ThreadAttention, useThreadAttention } from "./useThreadAttention";
 import { BrailleSpinner } from "./BrailleSpinner";
@@ -213,11 +209,9 @@ function ProjectGroup({
     }))
     .toSorted((left, right) => right.lastActivity.localeCompare(left.lastActivity))
     .map((entry) => entry.workspace);
-  const archived = workspaces.filter((workspace) => workspace.status === "archived");
   const unassigned = unassignedProjectThreads(projectThreads, project.id, workspaces);
   const key = `${project.environmentId}:${project.id}`;
   const isExpanded = expanded[key] ?? true;
-  const showArchived = expanded[`${key}:archived`] ?? false;
   const showUnassigned = expanded[`${key}:unassigned`] ?? false;
 
   return (
@@ -301,26 +295,6 @@ function ProjectGroup({
               ) : null}
             </li>
           ) : null}
-          {archived.length > 0 ? (
-            <li className="flex flex-col">
-              <ShelfToggle
-                label={`Archived (${archived.length})`}
-                expanded={showArchived}
-                onToggle={() => onToggle(`${key}:archived`, false)}
-              />
-              {showArchived ? (
-                <ul className="flex flex-col gap-px">
-                  {archived.map((workspace) => (
-                    <ArchivedWorkspaceRow
-                      key={workspace.id}
-                      environmentId={project.environmentId}
-                      workspace={workspace}
-                    />
-                  ))}
-                </ul>
-              ) : null}
-            </li>
-          ) : null}
         </ul>
       ) : null}
     </li>
@@ -361,6 +335,8 @@ function WorkspaceRow({
   isActive: boolean;
 }) {
   const { open } = useOpenWorkspace();
+  const archive = useArchiveWorkspace();
+  const siblings = useEnvironmentWorkspaces(environmentId);
   const attentionOf = useThreadAttention();
   const attention = members.map(attentionOf);
   // Creating, archiving, or a running setup or archive script count as busy, like an agent.
@@ -431,7 +407,7 @@ function WorkspaceRow({
           variant="ghost-muted"
           aria-label={`Archive ${workspace.name}`}
           disabled={workspace.status === "creating" || workspace.status === "archiving"}
-          onClick={() => openArchiveWorkspaceDialog(target)}
+          onClick={() => void archive(environmentId, workspace, siblings)}
         >
           <ArchiveIcon />
         </Button>
@@ -445,37 +421,6 @@ function RelativeTime({ timestamp }: { timestamp: string }) {
   const nowMinute = useNowMinute();
   return compactRelativeTime(
     formatRelativeTimeLabel(timestamp, Date.parse(`${nowMinute}:00.000Z`)),
-  );
-}
-
-function ArchivedWorkspaceRow({
-  environmentId,
-  workspace,
-}: {
-  environmentId: EnvironmentId;
-  workspace: Workspace;
-}) {
-  const command = useAtomCommand(forkWorkspaceEnvironment.command);
-  return (
-    <li className="group/workspace flex items-center gap-1 rounded-md pr-1 hover:bg-sidebar-row-hover">
-      <button
-        type="button"
-        className="flex h-7 min-w-0 flex-1 cursor-pointer items-center gap-2 px-2 text-left text-muted-foreground text-xs"
-        onClick={() => openWorkspaceLog({ environmentId, workspaceId: workspace.id })}
-      >
-        <ArchiveIcon className="size-3 shrink-0" />
-        <span className="min-w-0 truncate">{workspace.name}</span>
-      </button>
-      <Button
-        size="xs"
-        variant="ghost-muted"
-        onClick={() =>
-          void command({ environmentId, input: { type: "unarchive", workspaceId: workspace.id } })
-        }
-      >
-        Restore
-      </Button>
-    </li>
   );
 }
 

@@ -1,13 +1,4 @@
-import {
-  type EnvironmentId,
-  type ProjectId,
-  type WorkspaceError,
-  type WorkspaceId,
-} from "@t3tools/contracts";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+import { type EnvironmentId, type ProjectId, type WorkspaceId } from "@t3tools/contracts";
 import { CheckIcon } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 
@@ -25,33 +16,21 @@ import {
 } from "../../components/ui/dialog";
 import { useProjects } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { closeWorkspaceDialog, openWorkspaceLog, useForkWorkspaceDialogs } from "./dialogStore";
+import { closeWorkspaceDialog, useForkWorkspaceDialogs } from "./dialogStore";
 import { forkWorkspaceEnvironment, useEnvironmentWorkspaces, useWorkspaceLog } from "./state";
-import { sameWorkspacePath, workspaceAcceptsChats } from "./logic";
-import { useActiveWorkspaceLocation } from "./useActiveWorkspaceLocation";
-import { useCreateWorkspace, useOpenWorkspace } from "./useOpenWorkspace";
-
-function failureMessage(cause: unknown): string {
-  return cause instanceof Error && cause.message.length > 0
-    ? cause.message
-    : "Something went wrong.";
-}
-
-function asWorkspaceError(cause: unknown): WorkspaceError | null {
-  return typeof cause === "object" &&
-    cause !== null &&
-    "_tag" in cause &&
-    cause._tag === "WorkspaceError"
-    ? (cause as WorkspaceError)
-    : null;
-}
+import { useArchiveWorkspace, ArchiveFailureNotifier } from "./useArchiveWorkspace";
+import { useCreateWorkspace } from "./useOpenWorkspace";
+import { useConnectedEnvironmentIds } from "../../state/environments";
 
 export function ForkWorkspaceDialogHost() {
   const dialogs = useForkWorkspaceDialogs();
+  const environmentIds = useConnectedEnvironmentIds();
   return (
     <>
+      {environmentIds.map((environmentId) => (
+        <ArchiveFailureNotifier key={environmentId} environmentId={environmentId} />
+      ))}
       {dialogs.newWorkspace ? <NewWorkspaceDialog preset={dialogs.newWorkspace} /> : null}
-      {dialogs.archive ? <ArchiveWorkspaceDialog target={dialogs.archive} /> : null}
       {dialogs.log ? <WorkspaceLogDialog target={dialogs.log} /> : null}
     </>
   );
@@ -141,146 +120,18 @@ function NewWorkspaceDialog({
   );
 }
 
-function ArchiveWorkspaceDialog({
+function WorkspaceLogDialog({
   target,
 }: {
   target: { environmentId: EnvironmentId; workspaceId: WorkspaceId };
 }) {
   const workspaces = useEnvironmentWorkspaces(target.environmentId);
   const workspace = workspaces.find((entry) => entry.id === target.workspaceId);
-  const active = useActiveWorkspaceLocation();
-  const viewingThisWorkspace =
-    workspace !== undefined &&
-    active.environmentId === target.environmentId &&
-    sameWorkspacePath(active.worktreePath, workspace.worktreePath);
-  const { open } = useOpenWorkspace();
-  const command = useAtomCommand(forkWorkspaceEnvironment.command, { reportFailure: false });
-  const [problem, setProblem] = useState<WorkspaceError | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const scriptFailed =
-    workspace?.status === "ready" &&
-    workspace.lastScript?.kind === "archive" &&
-    workspace.lastScript.phase === "failed";
-
-  const submit = async (discardChanges: boolean) => {
-    setError(null);
-    const result = await command({
-      environmentId: target.environmentId,
-      input: {
-        type: "archive",
-        workspaceId: target.workspaceId,
-        ...(discardChanges ? { discardChanges: true } : {}),
-        ...(scriptFailed ? { ignoreScriptFailure: true } : {}),
-      },
-    });
-    if (result._tag === "Success") {
-      closeWorkspaceDialog("archive");
-      openWorkspaceLog(target);
-      // Its chats are about to close; stay in the same repository rather than
-      // letting upstream fall back to whichever project was used last.
-      const sibling = viewingThisWorkspace
-        ? workspaces.find(
-            (entry) =>
-              entry.id !== target.workspaceId &&
-              entry.projectId === workspace?.projectId &&
-              workspaceAcceptsChats(entry),
-          )
-        : undefined;
-      if (sibling) void open(target.environmentId, sibling);
-      return;
-    }
-    if (isAtomCommandInterrupted(result)) return;
-    const cause = squashAtomCommandFailure(result);
-    const workspaceError = asWorkspaceError(cause);
-    if (workspaceError) setProblem(workspaceError);
-    else setError(failureMessage(cause));
-  };
-
-  return (
-    <Dialog
-      open
-      onOpenChange={(isOpen) => {
-        if (!isOpen) closeWorkspaceDialog("archive");
-      }}
-    >
-      <DialogPopup className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Archive {workspace?.name ?? "workspace"}?</DialogTitle>
-          <DialogDescription>
-            Runs the archive script, archives this workspace's chats, and removes its folder. The
-            branch is kept, so you can restore it later.
-          </DialogDescription>
-        </DialogHeader>
-        <DialogPanel>
-          <div className="flex flex-col gap-2 text-sm">
-            {problem?.reason === "agents-running" ? (
-              <p role="alert" className="text-destructive">
-                {problem.message}
-              </p>
-            ) : null}
-            {problem?.reason === "uncommitted-changes" ? (
-              <>
-                <p role="alert" className="text-destructive">
-                  {problem.message}
-                </p>
-                <pre className="max-h-40 overflow-auto rounded-md bg-muted p-2 font-mono text-xs">
-                  {(problem.changedFiles ?? []).join("\n")}
-                </pre>
-              </>
-            ) : null}
-            {scriptFailed ? (
-              <p role="alert" className="text-destructive">
-                The archive script failed (exit code {workspace?.lastScript?.exitCode ?? "unknown"}
-                ).
-              </p>
-            ) : null}
-            {problem &&
-            problem.reason !== "agents-running" &&
-            problem.reason !== "uncommitted-changes" ? (
-              <p role="alert" className="text-destructive">
-                {problem.message}
-              </p>
-            ) : null}
-            {error ? (
-              <p role="alert" className="text-destructive">
-                {error}
-              </p>
-            ) : null}
-          </div>
-        </DialogPanel>
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => closeWorkspaceDialog("archive")}>
-            Cancel
-          </Button>
-          {problem?.reason === "uncommitted-changes" ? (
-            <Button type="button" variant="destructive" onClick={() => void submit(true)}>
-              Discard and archive
-            </Button>
-          ) : scriptFailed ? (
-            <Button type="button" variant="destructive" onClick={() => void submit(false)}>
-              Archive anyway
-            </Button>
-          ) : (
-            <Button type="button" onClick={() => void submit(false)}>
-              Archive
-            </Button>
-          )}
-        </DialogFooter>
-      </DialogPopup>
-    </Dialog>
-  );
-}
-
-function WorkspaceLogDialog({
-  target,
-}: {
-  target: { environmentId: EnvironmentId; workspaceId: WorkspaceId };
-}) {
-  const workspace = useEnvironmentWorkspaces(target.environmentId).find(
-    (entry) => entry.id === target.workspaceId,
-  );
   const command = useAtomCommand(forkWorkspaceEnvironment.command);
+  const archive = useArchiveWorkspace();
   const script = workspace?.lastScript ?? null;
+  const archiveScriptFailed =
+    workspace?.status === "ready" && script?.kind === "archive" && script.phase === "failed";
   const scriptRunning = script?.phase === "running";
   return (
     <Dialog
@@ -324,6 +175,18 @@ function WorkspaceLogDialog({
               }
             >
               Retry
+            </Button>
+          ) : null}
+          {workspace && archiveScriptFailed ? (
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => {
+                closeWorkspaceDialog("log");
+                void archive(target.environmentId, workspace, workspaces);
+              }}
+            >
+              Archive anyway
             </Button>
           ) : null}
           <Button type="button" onClick={() => closeWorkspaceDialog("log")}>

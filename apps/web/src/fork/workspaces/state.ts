@@ -6,6 +6,8 @@ import {
 import {
   FORK_WORKSPACE_WS_METHODS,
   type EnvironmentId,
+  type ProjectId,
+  type ProjectWorkspaceScripts,
   type Workspace,
   type WorkspaceId,
 } from "@t3tools/contracts";
@@ -35,21 +37,10 @@ export const forkWorkspaceEnvironment = {
     tag: FORK_WORKSPACE_WS_METHODS.forkSubscribeWorkspaceLog,
     transform: (stream) => stream.pipe(Stream.scan(() => "", accumulateWorkspaceLog)),
   }),
-  create: createEnvironmentRpcCommand(connectionAtomRuntime, {
-    label: "fork:workspace-create",
-    tag: FORK_WORKSPACE_WS_METHODS.forkWorkspacesCreate,
-  }),
-  archive: createEnvironmentRpcCommand(connectionAtomRuntime, {
-    label: "fork:workspace-archive",
-    tag: FORK_WORKSPACE_WS_METHODS.forkWorkspacesArchive,
-  }),
-  unarchive: createEnvironmentRpcCommand(connectionAtomRuntime, {
-    label: "fork:workspace-unarchive",
-    tag: FORK_WORKSPACE_WS_METHODS.forkWorkspacesUnarchive,
-  }),
-  retry: createEnvironmentRpcCommand(connectionAtomRuntime, {
-    label: "fork:workspace-retry",
-    tag: FORK_WORKSPACE_WS_METHODS.forkWorkspacesRetry,
+  /** Every mutation: `{ type: "create" | "archive" | … }`; see `WorkspaceCommand`. */
+  command: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "fork:workspace-command",
+    tag: FORK_WORKSPACE_WS_METHODS.forkWorkspacesCommand,
   }),
 };
 
@@ -57,9 +48,46 @@ export const forkWorkspaceEnvironment = {
 export const environmentWorkspacesAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get): ReadonlyArray<Workspace> => {
     const result = get(forkWorkspaceEnvironment.workspaces({ environmentId, input: {} }));
-    return Option.getOrElse(AsyncResult.value(result), () => EMPTY_WORKSPACES);
+    return Option.match(AsyncResult.value(result), {
+      onNone: () => EMPTY_WORKSPACES,
+      onSome: (state) => state.workspaces,
+    });
   }).pipe(Atom.withLabel(`fork:environment-workspaces:${environmentId}`)),
 );
+
+const EMPTY_PROJECT_SCRIPTS: ReadonlyArray<ProjectWorkspaceScripts> = [];
+const EMPTY_PROJECT_SCRIPTS_ATOM = Atom.make(EMPTY_PROJECT_SCRIPTS).pipe(
+  Atom.withLabel("fork:environment-project-scripts:empty"),
+);
+
+export const environmentProjectScriptsAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get): ReadonlyArray<ProjectWorkspaceScripts> => {
+    const result = get(forkWorkspaceEnvironment.workspaces({ environmentId, input: {} }));
+    return Option.match(AsyncResult.value(result), {
+      onNone: () => EMPTY_PROJECT_SCRIPTS,
+      onSome: (state) => state.projectScripts,
+    });
+  }).pipe(Atom.withLabel(`fork:environment-project-scripts:${environmentId}`)),
+);
+
+/** Settings-configured scripts for one checkout; empty when none are saved. */
+export function useProjectWorkspaceScripts(
+  environmentId: EnvironmentId | null,
+  projectId: ProjectId | null,
+): Omit<ProjectWorkspaceScripts, "projectId"> {
+  const all = useAtomValue(
+    environmentId === null
+      ? EMPTY_PROJECT_SCRIPTS_ATOM
+      : environmentProjectScriptsAtom(environmentId),
+  );
+  return all.find((entry) => entry.projectId === projectId) ?? NO_SCRIPTS;
+}
+
+const NO_SCRIPTS: Omit<ProjectWorkspaceScripts, "projectId"> = {
+  setup: "",
+  archive: "",
+  scripts: [],
+};
 
 export function useEnvironmentWorkspaces(environmentId: EnvironmentId): ReadonlyArray<Workspace> {
   return useAtomValue(environmentWorkspacesAtom(environmentId));

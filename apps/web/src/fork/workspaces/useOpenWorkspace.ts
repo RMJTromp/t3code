@@ -105,13 +105,17 @@ export function useOpenWorkspace() {
  * is chosen here so the server runs setup in that chat's terminal.
  */
 export function useCreateWorkspace() {
-  const create = useAtomCommand(forkWorkspaceEnvironment.create);
+  const command = useAtomCommand(forkWorkspaceEnvironment.command);
   const { newChat } = useOpenWorkspace();
   return async (environmentId: EnvironmentId, projectId: ProjectId): Promise<Workspace | null> => {
     const setupThreadId = newThreadId();
-    const result = await create({ environmentId, input: { projectId, setupThreadId } });
-    if (result._tag === "Failure") return null;
-    await newChat(environmentId, result.value, setupThreadId);
-    return result.value;
+    const result = await command({
+      environmentId,
+      input: { type: "create", projectId, setupThreadId },
+    });
+    const workspace = result._tag === "Success" ? result.value.workspace : null;
+    if (workspace === null) return null;
+    await newChat(environmentId, workspace, setupThreadId);
+    return workspace;
   };
 }

@@ -29,9 +29,20 @@ reply you have not read shows a blue dot, and its workspace name turns brighter.
 
 Chats without a repository stay in **Chats** at the bottom of the sidebar.
 
-## Setup and archive scripts
+## Workspace scripts
 
-Add a `workspace` key to the repository's `t3.json`:
+Hover a repository in the sidebar and click its cog, or open **Settings → Projects** and pick the
+repository, to reach **Workspace scripts**. Each project has its own.
+
+- **Setup script** runs once when a workspace is created or restored, in a terminal that opens in
+  the right panel. Only your script's output shows there.
+- **Archive script** runs before a workspace's folder is removed.
+- **Scripts** are extra named commands, such as `dev`. Run one from **Run script** in the right
+  panel, in its tab bar or on its empty screen. It runs in a terminal in the right panel of the
+  chat you're viewing, and the workspace shows its name in blue while it runs. Press `Ctrl+C` in
+  the terminal, or close its tab, to stop it.
+
+A repository can also set setup and archive in `t3.json`:
 
 ```json
 {
@@ -42,15 +53,13 @@ Add a `workspace` key to the repository's `t3.json`:
 }
 ```
 
-Scripts are read from the workspace's own branch and run in a terminal in the workspace folder,
-using your usual shell. Without `workspace.setup`, the project's setup action runs, or a `t3.json` script
-with `"runOnWorktreeCreate": true`. There is no fallback for `archive`.
+`t3.json` is read from the workspace's own branch. Without any setup script, the project's setup
+action runs, or a `t3.json` script with `"runOnWorktreeCreate": true`. With none of these, nothing
+runs and no terminal opens.
 
 Scripts receive `T3_WORKSPACE_NAME`, `T3_WORKSPACE_PATH`, `T3_ROOT_PATH` (the main checkout),
-`T3_DEFAULT_BRANCH`, `T3CODE_PROJECT_ROOT`, and `T3CODE_WORKTREE_PATH`.
-
-Setup output appears in the right panel's terminal. If setup fails, the workspace shows a warning
-icon in the sidebar; click it to see the output.
+`T3_DEFAULT_BRANCH`, `T3CODE_PROJECT_ROOT`, and `T3CODE_WORKTREE_PATH`. If setup fails, the
+workspace shows a warning icon in the sidebar; click it to see the output.
 
 ## Archive and restore
 

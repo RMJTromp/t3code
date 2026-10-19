@@ -19,6 +19,8 @@ export interface WorkspaceScriptRequest {
   readonly cwd: string;
   readonly env: Readonly<Record<string, string>>;
   readonly onOutput: (text: string) => void;
+  /** Runs once the terminal exists, before the script starts. */
+  readonly onOpened?: Effect.Effect<void>;
 }
 
 export interface WorkspaceScriptResult {
@@ -133,6 +135,7 @@ export const runWorkspaceScript = Effect.fn("ForkWorkspaces.runWorkspaceScript")
       Effect.catch((error) => terminalFailure(error).pipe(Effect.as(false))),
     );
   if (!opened) return { exitCode: null, timedOut: false } satisfies WorkspaceScriptResult;
+  if (request.onOpened) yield* request.onOpened;
 
   // Subscribe before writing so the sentinel cannot race past the listener.
   const unsubscribe = yield* terminals.subscribe((event) => {

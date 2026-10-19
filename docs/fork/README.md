@@ -11,6 +11,9 @@ merging upstream stays a routine pull.
   one-line delegations. Every such line carries `// fork:workspaces` (or `{/* fork:workspaces */}`
   in JSX), so `git grep fork:workspaces` lists every touch point.
 - Spreads go at the top of upstream lists, because upstream appends to the end.
+- Keep fork RPCs to the three that exist (one command, two streams). Upstream's RPC group sits near
+  a TypeScript complexity limit; a new fork RPC can tip the server build into `any` errors. Add a
+  `type` to `WorkspaceCommand` instead.
 - Fork tables use their own migration ledger (`fork_schema_migrations`), never upstream's numbered
   `Migrations/NNN_*` files.
 - Server guards read `WorkspaceOwnership`, a `Context.Reference` with an empty default, so upstream
@@ -36,6 +39,8 @@ Deleting the tagged lines and the `fork/` folders restores upstream behavior.
 | `apps/web/src/hooks/useHandleNewThread.ts`                                        | Route new project chats into a workspace and give each workspace its own draft.   |
 | `apps/web/src/hooks/useThreadActions.ts`                                          | Deleting a workspace's last chat never offers to delete its worktree.             |
 | `apps/web/src/components/BranchToolbarEnvModeSelector.tsx`                        | Chats in a workspace cannot switch to another checkout.                           |
+| `apps/web/src/components/settings/ProjectSettingsPanel.tsx`                       | Mount the Workspace scripts section on a project's settings page.                 |
+| `apps/web/src/components/RightPanelTabs.tsx`                                      | Mount the Run script menu in the right panel's tab bar and empty screen.          |
 
 ## Merging upstream
 

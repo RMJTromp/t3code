@@ -154,7 +154,7 @@ function ArchiveWorkspaceDialog({
     active.environmentId === target.environmentId &&
     sameWorkspacePath(active.worktreePath, workspace.worktreePath);
   const { open } = useOpenWorkspace();
-  const archive = useAtomCommand(forkWorkspaceEnvironment.archive, { reportFailure: false });
+  const command = useAtomCommand(forkWorkspaceEnvironment.command, { reportFailure: false });
   const [problem, setProblem] = useState<WorkspaceError | null>(null);
   const [error, setError] = useState<string | null>(null);
   const scriptFailed =
@@ -164,9 +164,10 @@ function ArchiveWorkspaceDialog({
 
   const submit = async (discardChanges: boolean) => {
     setError(null);
-    const result = await archive({
+    const result = await command({
       environmentId: target.environmentId,
       input: {
+        type: "archive",
         workspaceId: target.workspaceId,
         ...(discardChanges ? { discardChanges: true } : {}),
         ...(scriptFailed ? { ignoreScriptFailure: true } : {}),
@@ -278,7 +279,7 @@ function WorkspaceLogDialog({
   const workspace = useEnvironmentWorkspaces(target.environmentId).find(
     (entry) => entry.id === target.workspaceId,
   );
-  const retry = useAtomCommand(forkWorkspaceEnvironment.retry);
+  const command = useAtomCommand(forkWorkspaceEnvironment.command);
   const script = workspace?.lastScript ?? null;
   const scriptRunning = script?.phase === "running";
   return (
@@ -316,9 +317,9 @@ function WorkspaceLogDialog({
               type="button"
               variant="outline"
               onClick={() =>
-                void retry({
+                void command({
                   environmentId: target.environmentId,
-                  input: { workspaceId: target.workspaceId },
+                  input: { type: "retry", workspaceId: target.workspaceId },
                 })
               }
             >

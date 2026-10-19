@@ -13,6 +13,7 @@ import {
   FolderPlusIcon,
   GitBranchIcon,
   PlusIcon,
+  SettingsIcon,
 } from "lucide-react";
 
 import { openCommandPalette } from "../../commandPaletteBus";
@@ -22,6 +23,11 @@ import { Button } from "../../components/ui/button";
 import { SidebarContent, SidebarGroup } from "../../components/ui/sidebar";
 import { isElectron } from "../../env";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { useClientSettings } from "../../hooks/useSettings";
+import {
+  deriveLogicalProjectKeyFromSettings,
+  selectProjectGroupingSettings,
+} from "../../logicalProject";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useScratchProject } from "../../hooks/useScratchProject";
 import { cn } from "../../lib/utils";
@@ -35,7 +41,13 @@ import {
   openNewWorkspaceDialog,
   openWorkspaceLog,
 } from "./dialogStore";
-import { sameWorkspacePath, threadsForWorkspace, unassignedProjectThreads } from "./logic";
+import {
+  compactRelativeTime,
+  sameWorkspacePath,
+  threadsForWorkspace,
+  unassignedProjectThreads,
+  workspaceLastActivity,
+} from "./logic";
 import { forkWorkspaceEnvironment, useEnvironmentWorkspaces } from "./state";
 import { useActiveWorkspaceLocation } from "./useActiveWorkspaceLocation";
 import { useCreateWorkspace, useOpenWorkspace } from "./useOpenWorkspace";
@@ -184,13 +196,23 @@ function ProjectGroup({
   onToggle: (key: string, fallback: boolean) => void;
 }) {
   const createWorkspace = useCreateWorkspace();
+  const navigate = useNavigate();
+  const groupingSettings = useClientSettings(selectProjectGroupingSettings);
   const workspaces = useEnvironmentWorkspaces(project.environmentId).filter(
     (workspace) => workspace.projectId === project.id,
   );
   const projectThreads = threads.filter((thread) => thread.environmentId === project.environmentId);
   const live = workspaces
     .filter((workspace) => workspace.status !== "archived")
-    .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
+    .map((workspace) => ({
+      workspace,
+      lastActivity: workspaceLastActivity(
+        workspace,
+        threadsForWorkspace(projectThreads, workspace),
+      ),
+    }))
+    .toSorted((left, right) => right.lastActivity.localeCompare(left.lastActivity))
+    .map((entry) => entry.workspace);
   const archived = workspaces.filter((workspace) => workspace.status === "archived");
   const unassigned = unassignedProjectThreads(projectThreads, project.id, workspaces);
   const key = `${project.environmentId}:${project.id}`;
@@ -213,6 +235,25 @@ function ProjectGroup({
           <ProjectFavicon project={project} className="size-4 shrink-0" />
           <span className="min-w-0 truncate font-medium">{project.title}</span>
         </button>
+        <span className="hidden group-focus-within/project:flex group-hover/project:flex">
+          <Button
+            size="icon-xs"
+            variant="ghost-muted"
+            aria-label={`Workspace scripts for ${project.title}`}
+            onClick={() =>
+              void navigate({
+                to: "/settings/projects",
+                search: {
+                  project: deriveLogicalProjectKeyFromSettings(project, groupingSettings),
+                  machine: undefined,
+                },
+                hash: "workspace-scripts",
+              })
+            }
+          >
+            <SettingsIcon />
+          </Button>
+        </span>
         <Button
           size="icon-xs"
           variant="ghost-muted"
@@ -327,15 +368,13 @@ function WorkspaceRow({
     attention.some((entry) => entry.working) ||
     workspace.status === "creating" ||
     workspace.status === "archiving" ||
-    workspace.lastScript?.phase === "running";
+    workspace.lastScript?.phase === "running" ||
+    workspace.runningScripts.length > 0;
   const unread = attention.some((entry) => entry.unread);
   const failed = workspace.status === "failed" || workspace.error !== null;
   const target = { environmentId, workspaceId: workspace.id };
-  // Any chat update counts as activity; a workspace without chats dates from its creation.
-  const lastActivity = members.reduce(
-    (latest, thread) => (thread.updatedAt > latest ? thread.updatedAt : latest),
-    workspace.createdAt,
-  );
+  const runningScript = workspace.runningScripts[0];
+  const lastActivity = workspaceLastActivity(workspace, members);
   return (
     <li
       className={cn(
@@ -365,9 +404,15 @@ function WorkspaceRow({
         {unread ? (
           <span aria-label="Unread" className="size-1.5 shrink-0 rounded-full bg-primary" />
         ) : null}
-        <span className="ml-auto shrink-0 text-muted-foreground/70 text-xs tabular-nums group-hover/workspace:hidden">
-          <RelativeTime timestamp={lastActivity} />
-        </span>
+        {runningScript ? (
+          <span className="ml-auto max-w-24 shrink-0 truncate text-primary text-xs group-hover/workspace:hidden">
+            {runningScript.name.toLowerCase()}
+          </span>
+        ) : (
+          <span className="ml-auto shrink-0 text-muted-foreground/70 text-xs tabular-nums group-hover/workspace:hidden">
+            <RelativeTime timestamp={lastActivity} />
+          </span>
+        )}
       </button>
       {failed ? (
         <Button
@@ -398,7 +443,9 @@ function WorkspaceRow({
 /** Only this label re-renders on the minute tick, as in upstream's sidebar. */
 function RelativeTime({ timestamp }: { timestamp: string }) {
   const nowMinute = useNowMinute();
-  return formatRelativeTimeLabel(timestamp, Date.parse(`${nowMinute}:00.000Z`));
+  return compactRelativeTime(
+    formatRelativeTimeLabel(timestamp, Date.parse(`${nowMinute}:00.000Z`)),
+  );
 }
 
 function ArchivedWorkspaceRow({
@@ -408,7 +455,7 @@ function ArchivedWorkspaceRow({
   environmentId: EnvironmentId;
   workspace: Workspace;
 }) {
-  const unarchive = useAtomCommand(forkWorkspaceEnvironment.unarchive);
+  const command = useAtomCommand(forkWorkspaceEnvironment.command);
   return (
     <li className="group/workspace flex items-center gap-1 rounded-md pr-1 hover:bg-sidebar-row-hover">
       <button
@@ -422,7 +469,9 @@ function ArchivedWorkspaceRow({
       <Button
         size="xs"
         variant="ghost-muted"
-        onClick={() => void unarchive({ environmentId, input: { workspaceId: workspace.id } })}
+        onClick={() =>
+          void command({ environmentId, input: { type: "unarchive", workspaceId: workspace.id } })
+        }
       >
         Restore
       </Button>

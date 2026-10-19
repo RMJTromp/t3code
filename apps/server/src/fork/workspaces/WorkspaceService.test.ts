@@ -244,7 +244,7 @@ const awaitWorkspace = (
   predicate: (workspace: Workspace) => boolean,
 ) =>
   service.stream.pipe(
-    Stream.map((workspaces) => workspaces.find(predicate)),
+    Stream.map((state) => state.workspaces.find(predicate)),
     Stream.filter((workspace) => workspace !== undefined),
     Stream.runHead,
     Effect.map((workspace) => Option.getOrThrow(workspace)!),
@@ -348,6 +348,57 @@ describe("WorkspaceService", () => {
     );
   });
 
+  it.live("prefers settings scripts and runs extra scripts in the viewed chat", () => {
+    const fixture = makeFixture();
+    return Effect.gen(function* () {
+      const service = yield* WorkspaceService.make;
+      yield* service.setProjectScripts({
+        projectId: fixture.projectId,
+        setup: 'echo "from settings"',
+        archive: "",
+        scripts: [{ id: "dev", name: "Dev", command: "sleep 0.5; echo dev-ran" }],
+      });
+      const created = yield* service.create({
+        projectId: fixture.projectId,
+        setupThreadId: ThreadId.make("thread-draft"),
+      });
+      yield* awaitWorkspace(
+        service,
+        (workspace) => workspace.id === created.id && scriptDone(workspace),
+      );
+      // Settings beat the t3.json `workspace.setup` key.
+      assert.isFalse(NodeFS.existsSync(NodePath.join(fixture.root, "setup.log")));
+
+      yield* service.runProjectScript({
+        workspaceId: created.id,
+        scriptId: "dev",
+        threadId: ThreadId.make("thread-chat"),
+      });
+      yield* awaitWorkspace(
+        service,
+        (workspace) => workspace.id === created.id && workspace.runningScripts.length > 0,
+      );
+      const finished = yield* awaitWorkspace(
+        service,
+        (workspace) => workspace.id === created.id && workspace.runningScripts.length === 0,
+      );
+      assert.deepEqual(finished.runningScripts, []);
+      assert.include(fixture.terminals, "thread-chat/script-dev");
+
+      const missing = yield* service
+        .runProjectScript({
+          workspaceId: created.id,
+          scriptId: "nope",
+          threadId: ThreadId.make("thread-chat"),
+        })
+        .pipe(Effect.flip);
+      assert.equal(missing.reason, "not-found");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(WorkspaceStore.layer.pipe(Layer.provideMerge(servicesLayer(fixture)))),
+    );
+  });
+
   it.live("keeps an archive open when its script fails", () => {
     const fixture = makeFixture();
     NodeFS.writeFileSync(
@@ -414,6 +465,7 @@ describe("WorkspaceService", () => {
         error: null,
         lastScript: null,
         setupTerminal: null,
+        runningScripts: [],
         createdAt: "2026-10-19T00:00:00.000Z",
         archivedAt: null,
       };

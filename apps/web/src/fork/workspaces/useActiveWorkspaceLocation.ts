@@ -15,5 +15,8 @@ export function useActiveWorkspaceLocation() {
     projectId: source?.projectId ?? null,
     worktreePath: source?.worktreePath ?? null,
     threadId: target?.kind === "server" ? target.threadRef.threadId : null,
+    /** The chat in view, sent or draft; its right panel hosts script terminals. */
+    viewedThreadId:
+      target?.kind === "server" ? target.threadRef.threadId : (draft?.threadId ?? null),
   };
 }

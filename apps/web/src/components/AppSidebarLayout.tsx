@@ -360,7 +360,8 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           <SidebarRail onDoubleClick={resetSidebarWidth} />
         </Sidebar>
         {children}
-        <ForkWorkspaceDialogHost /> {/* fork:workspaces */}
+        {/* fork:workspaces */}
+        <ForkWorkspaceDialogHost />
         <SidebarControl />
         <NavigationHistoryShortcuts />
         <MainAppLocationTracker />

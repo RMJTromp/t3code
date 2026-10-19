@@ -92,6 +92,7 @@ import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
+import { RunScriptMenu as ForkRunScriptMenu } from "../fork/workspaces/RunScriptMenu"; // fork:workspaces
 
 interface RightPanelTabsProps {
   mode: PreviewPanelMode;
@@ -535,6 +536,8 @@ function RightPanelEmptyState(props: {
               />
             ),
           )}
+          {/* fork:workspaces */}
+          <ForkRunScriptMenu variant="empty" />
         </div>
       </div>
     </div>
@@ -1387,6 +1390,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             ) : null}
           </div>
         </ScrollArea>
+        {/* fork:workspaces */}
+        <ForkRunScriptMenu variant="tab" />
         {tabScrollState.hasOverflow ? (
           <div
             className="flex shrink-0 items-center gap-0.5 [-webkit-app-region:no-drag]"

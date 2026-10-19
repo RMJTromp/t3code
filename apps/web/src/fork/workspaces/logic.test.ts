@@ -3,6 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   accumulateWorkspaceLog,
+  compactRelativeTime,
+  workspaceLastActivity,
   neighbourAfterClose,
   routeNewThread,
   threadsForWorkspace,
@@ -25,6 +27,7 @@ function workspace(overrides: Partial<Workspace> = {}): Workspace {
     error: null,
     lastScript: null,
     setupTerminal: null,
+    runningScripts: [],
     createdAt: "2026-10-19T00:00:00.000Z",
     archivedAt: null,
     ...overrides,
@@ -115,5 +118,23 @@ describe("neighbourAfterClose", () => {
     expect(neighbourAfterClose(["a", "b", "c"], "b")).toBe("c");
     expect(neighbourAfterClose(["a", "b", "c"], "c")).toBe("b");
     expect(neighbourAfterClose(["a"], "a")).toBeNull();
+  });
+});
+
+describe("workspace activity", () => {
+  it("uses the newest chat update, else the creation time", () => {
+    const created = { createdAt: "2026-10-19T00:00:00.000Z" };
+    expect(workspaceLastActivity(created, [])).toBe(created.createdAt);
+    expect(
+      workspaceLastActivity(created, [
+        { updatedAt: "2026-10-19T02:00:00.000Z" },
+        { updatedAt: "2026-10-19T05:00:00.000Z" },
+      ]),
+    ).toBe("2026-10-19T05:00:00.000Z");
+  });
+
+  it("drops the ago suffix", () => {
+    expect(compactRelativeTime("3h ago")).toBe("3h");
+    expect(compactRelativeTime("just now")).toBe("now");
   });
 });

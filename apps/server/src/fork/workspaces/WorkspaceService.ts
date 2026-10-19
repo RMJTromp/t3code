@@ -9,6 +9,10 @@ import {
   type Workspace,
   type WorkspaceArchiveInput,
   type WorkspaceCreateInput,
+  type ProjectWorkspaceScripts,
+  type WorkspaceRunScriptInput,
+  type WorkspaceRunningScript,
+  type WorkspaceStateEvent,
   type WorkspaceLogEvent,
   type WorkspaceScriptKind,
   type WorkspaceStatus,
@@ -63,8 +67,16 @@ export class WorkspaceService extends Context.Service<
     /** Resumes whatever a restart or failure interrupted. */
     readonly retry: (workspaceId: WorkspaceId) => Effect.Effect<Workspace, WorkspaceError>;
     readonly list: Effect.Effect<ReadonlyArray<Workspace>>;
-    readonly stream: Stream.Stream<ReadonlyArray<Workspace>>;
+    /** Workspaces plus every project's scripts, re-sent whole on each change; both are small. */
+    readonly stream: Stream.Stream<WorkspaceStateEvent>;
     readonly logStream: (workspaceId: WorkspaceId) => Stream.Stream<WorkspaceLogEvent>;
+    /** Runs one of the project's extra scripts in a terminal of the chat in view. */
+    readonly runProjectScript: (
+      input: WorkspaceRunScriptInput,
+    ) => Effect.Effect<Workspace, WorkspaceError>;
+    readonly setProjectScripts: (
+      scripts: ProjectWorkspaceScripts,
+    ) => Effect.Effect<ProjectWorkspaceScripts, WorkspaceError>;
   }
 >()("t3/fork/workspaces/WorkspaceService") {}
 
@@ -121,13 +133,14 @@ export const make = Effect.gen(function* () {
     normalizeWorkspacePath(path.resolve(left)) === normalizeWorkspacePath(path.resolve(right));
 
   const records = new Map<WorkspaceId, StoredWorkspace>();
+  const projectScripts = new Map<ProjectId, ProjectWorkspaceScripts>();
   // The created path and its real path, so guards match either spelling.
   const realPaths = new Map<WorkspaceId, string>();
   const logListeners = new Map<WorkspaceId, Set<(event: WorkspaceLogEvent) => void>>();
   const locks = new Map<WorkspaceId, Semaphore.Semaphore>();
   // Name picking reads git and the record set, so creates take turns.
   const createLock = yield* Semaphore.make(1);
-  const changes = yield* PubSub.unbounded<ReadonlyArray<Workspace>>();
+  const changes = yield* PubSub.unbounded<WorkspaceStateEvent>();
   const backgroundScope = yield* Scope.make("parallel");
   yield* Effect.addFinalizer(() => Scope.close(backgroundScope, Exit.void));
 
@@ -137,6 +150,10 @@ export const make = Effect.gen(function* () {
   const snapshot = (): ReadonlyArray<Workspace> =>
     Array.from(records.values(), (record) => record.workspace);
   const list = Effect.sync(snapshot);
+  const state = (): WorkspaceStateEvent => ({
+    workspaces: snapshot(),
+    projectScripts: Array.from(projectScripts.values()),
+  });
 
   const lockFor = (workspaceId: WorkspaceId) => {
     let lock = locks.get(workspaceId);
@@ -174,7 +191,7 @@ export const make = Effect.gen(function* () {
       yield* store.save(record);
       records.set(record.workspace.id, record);
       syncOwnership(record.workspace);
-      yield* PubSub.publish(changes, snapshot());
+      yield* PubSub.publish(changes, state());
       return record.workspace;
     });
 
@@ -286,12 +303,16 @@ export const make = Effect.gen(function* () {
     );
 
   /**
-   * Setup: `workspace.setup` from the branch's t3.json, else the project's
-   * setup action, else t3.json's `runOnWorktreeCreate` script. Archive has no
-   * fallback: settle scripts serve a different event.
+   * Settings win, then `workspace.setup`/`archive` from the branch's t3.json.
+   * Setup then falls back to the project's setup action and t3.json's
+   * `runOnWorktreeCreate` script. Archive has no further fallback: settle
+   * scripts serve a different event.
    */
   const resolveScript = (workspace: Workspace, kind: WorkspaceScriptKind) =>
     Effect.gen(function* () {
+      const configured = projectScripts.get(workspace.projectId);
+      const fromSettings = kind === "setup" ? configured?.setup : configured?.archive;
+      if (fromSettings !== undefined && fromSettings.trim().length > 0) return fromSettings;
       const fileConfig = yield* readProjectFileConfig(workspace.worktreePath);
       const fromFile =
         kind === "setup" ? fileConfig?.workspace?.setup : fileConfig?.workspace?.archive;
@@ -305,6 +326,18 @@ export const make = Effect.gen(function* () {
       return (
         fileConfig?.scripts?.find((script) => script.runOnWorktreeCreate === true)?.command ?? null
       );
+    });
+
+  const scriptEnv = (workspace: Workspace, projectRoot: string) =>
+    projectScriptRuntimeEnv({
+      project: { cwd: projectRoot },
+      worktreePath: workspace.worktreePath,
+      extraEnv: {
+        T3_WORKSPACE_NAME: workspace.name,
+        T3_WORKSPACE_PATH: workspace.worktreePath,
+        T3_ROOT_PATH: projectRoot,
+        T3_DEFAULT_BRANCH: workspace.baseRef ?? "",
+      },
     });
 
   /** Returns true when the script succeeded or there was none. */
@@ -335,16 +368,7 @@ export const make = Effect.gen(function* () {
         terminalId: terminal.terminalId,
         command,
         cwd: workspace.worktreePath,
-        env: projectScriptRuntimeEnv({
-          project: { cwd: project.workspaceRoot },
-          worktreePath: workspace.worktreePath,
-          extraEnv: {
-            T3_WORKSPACE_NAME: workspace.name,
-            T3_WORKSPACE_PATH: workspace.worktreePath,
-            T3_ROOT_PATH: project.workspaceRoot,
-            T3_DEFAULT_BRANCH: workspace.baseRef ?? "",
-          },
-        }),
+        env: scriptEnv(workspace, project.workspaceRoot),
         onOutput: (text) => appendLog(workspaceId, text),
       }).pipe(
         Effect.provideService(TerminalManager.TerminalManager, terminals),
@@ -512,6 +536,7 @@ export const make = Effect.gen(function* () {
             setupThreadId === undefined
               ? null
               : { threadId: setupThreadId, terminalId: SETUP_TERMINAL_ID },
+          runningScripts: [],
           createdAt: yield* nowIso,
           archivedAt: null,
         };
@@ -757,11 +782,11 @@ export const make = Effect.gen(function* () {
       }
     });
 
-  const stream: WorkspaceService["Service"]["stream"] = Stream.callback<ReadonlyArray<Workspace>>(
+  const stream: WorkspaceService["Service"]["stream"] = Stream.callback<WorkspaceStateEvent>(
     (mailbox) =>
       Effect.gen(function* () {
         const subscription = yield* PubSub.subscribe(changes);
-        Queue.offerUnsafe(mailbox, snapshot());
+        Queue.offerUnsafe(mailbox, state());
         yield* Stream.fromSubscription(subscription).pipe(
           Stream.runForEach((workspaces) =>
             Effect.sync(() => Queue.offerUnsafe(mailbox, workspaces)),
@@ -771,6 +796,68 @@ export const make = Effect.gen(function* () {
       }),
     { bufferSize: 1, strategy: "sliding" },
   );
+
+  const setProjectScripts: WorkspaceService["Service"]["setProjectScripts"] = (scripts) =>
+    Effect.gen(function* () {
+      yield* store.saveProjectScripts(scripts);
+      projectScripts.set(scripts.projectId, scripts);
+      yield* PubSub.publish(changes, state());
+      return scripts;
+    });
+
+  const setRunning = (
+    workspaceId: WorkspaceId,
+    change: (
+      running: ReadonlyArray<WorkspaceRunningScript>,
+    ) => ReadonlyArray<WorkspaceRunningScript>,
+  ) =>
+    update(workspaceId, (record) => ({
+      ...record,
+      workspace: { ...record.workspace, runningScripts: change(record.workspace.runningScripts) },
+    })).pipe(Effect.ignore);
+
+  const runProjectScript: WorkspaceService["Service"]["runProjectScript"] = (input) =>
+    Effect.gen(function* () {
+      const { workspace } = yield* get(input.workspaceId);
+      if (workspace.status !== "ready" && workspace.status !== "failed") {
+        return yield* workspaceError("invalid-state", "Scripts run once the workspace is ready.");
+      }
+      const script = projectScripts
+        .get(workspace.projectId)
+        ?.scripts.find((entry) => entry.id === input.scriptId);
+      if (script === undefined || script.command.trim().length === 0) {
+        return yield* workspaceError("not-found", "This script no longer exists.");
+      }
+      // Its terminal is still busy; the client just shows it again.
+      if (workspace.runningScripts.some((entry) => entry.scriptId === script.id)) return workspace;
+      const project = yield* loadProject(workspace.projectId);
+      const running: WorkspaceRunningScript = {
+        scriptId: script.id,
+        name: script.name.trim() || "script",
+        threadId: input.threadId,
+        terminalId: `script-${script.id}`,
+      };
+      yield* runWorkspaceScript({
+        threadId: running.threadId,
+        terminalId: running.terminalId,
+        command: script.command,
+        cwd: workspace.worktreePath,
+        env: scriptEnv(workspace, project.workspaceRoot),
+        onOutput: (text) => appendLog(workspace.id, text),
+        onOpened: setRunning(workspace.id, (current) => [...current, running]),
+      }).pipe(
+        Effect.provideService(TerminalManager.TerminalManager, terminals),
+        Effect.provideService(Crypto.Crypto, crypto),
+        // Ctrl+C or closing the terminal also ends the run.
+        Effect.ensuring(
+          setRunning(workspace.id, (current) =>
+            current.filter((entry) => entry.scriptId !== running.scriptId),
+          ),
+        ),
+        Effect.forkIn(backgroundScope),
+      );
+      return workspace;
+    });
 
   const logStream: WorkspaceService["Service"]["logStream"] = (workspaceId) =>
     Stream.callback<WorkspaceLogEvent>((mailbox) =>
@@ -795,9 +882,16 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  for (const scripts of yield* store.listProjectScripts.pipe(Effect.orElseSucceed(() => []))) {
+    projectScripts.set(scripts.projectId, scripts);
+  }
   const startedAt = yield* nowIso;
   for (const record of yield* store.list.pipe(Effect.orElseSucceed(() => []))) {
-    let workspace = record.workspace;
+    // Script terminals do not survive a restart.
+    let workspace: Workspace =
+      record.workspace.runningScripts.length === 0
+        ? record.workspace
+        : { ...record.workspace, runningScripts: [] };
     const folderExists = yield* exists(workspace.worktreePath);
     // Nothing runs across a restart; leave an explicit retry instead of a lying spinner.
     if (workspace.status === "creating" || workspace.status === "archiving") {
@@ -821,6 +915,8 @@ export const make = Effect.gen(function* () {
   }
 
   return WorkspaceService.of({
+    runProjectScript,
+    setProjectScripts,
     create,
     archive,
     unarchive,

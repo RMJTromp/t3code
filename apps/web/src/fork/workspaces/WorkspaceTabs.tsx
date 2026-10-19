@@ -27,6 +27,7 @@ import { useThreadShell, useThreadShells, waitForThreadShell } from "../../state
 import { threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { BrailleSpinner } from "./BrailleSpinner";
+import { showScriptTerminal } from "./RunScriptMenu";
 import { useWorkspaceLastLocation } from "./lastLocation";
 import {
   neighbourAfterClose,
@@ -129,6 +130,23 @@ function WorkspaceTabStrip({
     const ref = scopeThreadRef(environmentId, setupTerminal.threadId);
     useRightPanelStore.getState().openTerminal(ref, setupTerminal.terminalId);
   }, [environmentId, setupStartedAt, setupTerminal]);
+
+  // Open a script's terminal once, when it starts in this chat; scripts that
+  // were already running when the chat opened stay where the user left them.
+  const scriptTerminals = workspace.runningScripts
+    .filter((entry) => entry.threadId === viewedThreadId)
+    .map((entry) => entry.terminalId)
+    .join("\n");
+  const seenScriptTerminals = useRef<ReadonlySet<string> | null>(null);
+  useEffect(() => {
+    const current = new Set(scriptTerminals.length === 0 ? [] : scriptTerminals.split("\n"));
+    const seen = seenScriptTerminals.current;
+    seenScriptTerminals.current = current;
+    if (seen === null) return;
+    for (const terminalId of current) {
+      if (!seen.has(terminalId)) showScriptTerminal(environmentId, viewedThreadId, terminalId);
+    }
+  }, [environmentId, scriptTerminals, viewedThreadId]);
 
   const tabKeys: ReadonlyArray<string> = [...members.map((thread) => thread.id), NEW_CHAT_KEY];
   const selectKey = (key: string) => {

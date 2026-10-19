@@ -1,4 +1,5 @@
 import {
+  ProjectWorkspaceScripts,
   ThreadId,
   Workspace,
   WorkspaceError,
@@ -24,6 +25,13 @@ export class WorkspaceStore extends Context.Service<
   {
     readonly list: Effect.Effect<ReadonlyArray<StoredWorkspace>, WorkspaceError>;
     readonly save: (record: StoredWorkspace) => Effect.Effect<void, WorkspaceError>;
+    readonly listProjectScripts: Effect.Effect<
+      ReadonlyArray<ProjectWorkspaceScripts>,
+      WorkspaceError
+    >;
+    readonly saveProjectScripts: (
+      scripts: ProjectWorkspaceScripts,
+    ) => Effect.Effect<void, WorkspaceError>;
   }
 >()("t3/fork/workspaces/WorkspaceStore") {}
 
@@ -48,6 +56,16 @@ const FORK_MIGRATIONS: ReadonlyArray<{
       )
     `,
   },
+  {
+    name: "002_fork_project_scripts",
+    run: (sql) => sql`
+      CREATE TABLE IF NOT EXISTS fork_project_scripts (
+        project_id TEXT PRIMARY KEY,
+        payload_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `,
+  },
 ];
 
 const decodeWorkspace = Schema.decodeUnknownEffect(Schema.fromJsonString(Workspace));
@@ -56,6 +74,9 @@ const ThreadIdsJson = Schema.fromJsonString(Schema.Array(ThreadId));
 const decodeThreadIds = Schema.decodeUnknownEffect(ThreadIdsJson);
 const encodeThreadIds = Schema.encodeEffect(ThreadIdsJson);
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+const ProjectScriptsJson = Schema.fromJsonString(ProjectWorkspaceScripts);
+const decodeProjectScripts = Schema.decodeUnknownEffect(ProjectScriptsJson);
+const encodeProjectScripts = Schema.encodeEffect(ProjectScriptsJson);
 
 const persistenceError = (message: string) => (cause: unknown) =>
   new WorkspaceError({
@@ -139,7 +160,27 @@ export const make = Effect.gen(function* () {
       `;
     }).pipe(Effect.mapError(persistenceError("Could not save the workspace")));
 
-  return WorkspaceStore.of({ list, save });
+  const listProjectScripts = sql<{ payload_json: string }>`
+    SELECT payload_json FROM fork_project_scripts ORDER BY project_id
+  `.pipe(
+    Effect.flatMap((rows) => Effect.forEach(rows, (row) => decodeProjectScripts(row.payload_json))),
+    Effect.mapError(persistenceError("Could not read project scripts")),
+  );
+
+  const saveProjectScripts = (scripts: ProjectWorkspaceScripts) =>
+    Effect.gen(function* () {
+      const payload = yield* encodeProjectScripts(scripts);
+      const updatedAt = yield* nowIso;
+      yield* sql`
+        INSERT INTO fork_project_scripts (project_id, payload_json, updated_at)
+        VALUES (${scripts.projectId}, ${payload}, ${updatedAt})
+        ON CONFLICT (project_id) DO UPDATE SET
+          payload_json = excluded.payload_json,
+          updated_at = excluded.updated_at
+      `;
+    }).pipe(Effect.mapError(persistenceError("Could not save project scripts")));
+
+  return WorkspaceStore.of({ list, save, listProjectScripts, saveProjectScripts });
 });
 
 export const layer = Layer.effect(WorkspaceStore, make);

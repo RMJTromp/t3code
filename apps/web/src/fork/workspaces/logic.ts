@@ -116,3 +116,20 @@ export function neighbourAfterClose(
   if (index < 0) return null;
   return keys[index + 1] ?? keys[index - 1] ?? null;
 }
+
+/** Any chat update counts as activity; a workspace without chats dates from its creation. */
+export function workspaceLastActivity(
+  workspace: Pick<Workspace, "createdAt">,
+  members: ReadonlyArray<{ readonly updatedAt: string }>,
+): string {
+  return members.reduce(
+    (latest, thread) => (thread.updatedAt > latest ? thread.updatedAt : latest),
+    workspace.createdAt,
+  );
+}
+
+/** "3h ago" → "3h", "just now" → "now", as upstream's sidebar shortens it. */
+export function compactRelativeTime(label: string): string {
+  if (label === "just now") return "now";
+  return label.endsWith(" ago") ? label.slice(0, -4) : label;
+}

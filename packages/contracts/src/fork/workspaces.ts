@@ -42,6 +42,31 @@ export const WorkspaceScriptRun = Schema.Struct({
 });
 export type WorkspaceScriptRun = typeof WorkspaceScriptRun.Type;
 
+export const WorkspaceRunningScript = Schema.Struct({
+  scriptId: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  threadId: ThreadId,
+  terminalId: TrimmedNonEmptyString,
+});
+export type WorkspaceRunningScript = typeof WorkspaceRunningScript.Type;
+
+/** A named project script a workspace can run on demand from the right panel. */
+export const ProjectExtraScript = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: Schema.String,
+  command: Schema.String,
+});
+export type ProjectExtraScript = typeof ProjectExtraScript.Type;
+
+/** Workspace scripts set in Settings; an empty setup or archive falls back to t3.json. */
+export const ProjectWorkspaceScripts = Schema.Struct({
+  projectId: ProjectId,
+  setup: Schema.String,
+  archive: Schema.String,
+  scripts: Schema.Array(ProjectExtraScript),
+});
+export type ProjectWorkspaceScripts = typeof ProjectWorkspaceScripts.Type;
+
 export const Workspace = Schema.Struct({
   id: WorkspaceId,
   projectId: ProjectId,
@@ -58,6 +83,10 @@ export const Workspace = Schema.Struct({
   setupTerminal: Schema.NullOr(
     Schema.Struct({ threadId: ThreadId, terminalId: TrimmedNonEmptyString }),
   ).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** Extra project scripts running in this workspace's terminals. */
+  runningScripts: Schema.Array(WorkspaceRunningScript).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   createdAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime),
 });
@@ -104,46 +133,53 @@ export const WorkspaceArchiveInput = Schema.Struct({
 });
 export type WorkspaceArchiveInput = typeof WorkspaceArchiveInput.Type;
 
-export const WorkspaceListEvent = Schema.Array(Workspace);
-export type WorkspaceListEvent = typeof WorkspaceListEvent.Type;
+export const WorkspaceRunScriptInput = Schema.Struct({
+  workspaceId: WorkspaceId,
+  scriptId: TrimmedNonEmptyString,
+  /** The chat in view; the script runs in a terminal in its right panel. */
+  threadId: ThreadId,
+});
+export type WorkspaceRunScriptInput = typeof WorkspaceRunScriptInput.Type;
 
-export const WorkspaceArchivedThreads = Schema.Array(ThreadId);
+/**
+ * Every fork mutation travels through one RPC. Upstream's RPC group sits close
+ * to a TypeScript complexity limit, so each extra fork RPC risks breaking the
+ * build on the next upstream merge.
+ */
+export const WorkspaceCommand = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("create"), ...WorkspaceCreateInput.fields }),
+  Schema.Struct({ type: Schema.Literal("archive"), ...WorkspaceArchiveInput.fields }),
+  Schema.Struct({ type: Schema.Literal("unarchive"), ...WorkspaceRefInput.fields }),
+  Schema.Struct({ type: Schema.Literal("retry"), ...WorkspaceRefInput.fields }),
+  Schema.Struct({ type: Schema.Literal("runScript"), ...WorkspaceRunScriptInput.fields }),
+  Schema.Struct({ type: Schema.Literal("setProjectScripts"), scripts: ProjectWorkspaceScripts }),
+]);
+export type WorkspaceCommand = typeof WorkspaceCommand.Type;
+
+export const WorkspaceCommandResult = Schema.Struct({ workspace: Schema.NullOr(Workspace) });
+export type WorkspaceCommandResult = typeof WorkspaceCommandResult.Type;
+
+export const WorkspaceStateEvent = Schema.Struct({
+  workspaces: Schema.Array(Workspace),
+  projectScripts: Schema.Array(ProjectWorkspaceScripts),
+});
+export type WorkspaceStateEvent = typeof WorkspaceStateEvent.Type;
 
 export const FORK_WORKSPACE_WS_METHODS = {
-  forkWorkspacesCreate: "fork.workspaces.create",
-  forkWorkspacesArchive: "fork.workspaces.archive",
-  forkWorkspacesUnarchive: "fork.workspaces.unarchive",
-  forkWorkspacesRetry: "fork.workspaces.retry",
+  forkWorkspacesCommand: "fork.workspaces.command",
   forkSubscribeWorkspaces: "fork.subscribeWorkspaces",
   forkSubscribeWorkspaceLog: "fork.subscribeWorkspaceLog",
 } as const;
 
-const WorkspaceRpcError = Schema.Union([WorkspaceError, EnvironmentAuthorizationError]);
-
 export const ForkWorkspaceRpcs = [
-  Rpc.make(FORK_WORKSPACE_WS_METHODS.forkWorkspacesCreate, {
-    payload: WorkspaceCreateInput,
-    success: Workspace,
-    error: WorkspaceRpcError,
-  }),
-  Rpc.make(FORK_WORKSPACE_WS_METHODS.forkWorkspacesArchive, {
-    payload: WorkspaceArchiveInput,
-    success: Workspace,
-    error: WorkspaceRpcError,
-  }),
-  Rpc.make(FORK_WORKSPACE_WS_METHODS.forkWorkspacesUnarchive, {
-    payload: WorkspaceRefInput,
-    success: Workspace,
-    error: WorkspaceRpcError,
-  }),
-  Rpc.make(FORK_WORKSPACE_WS_METHODS.forkWorkspacesRetry, {
-    payload: WorkspaceRefInput,
-    success: Workspace,
-    error: WorkspaceRpcError,
+  Rpc.make(FORK_WORKSPACE_WS_METHODS.forkWorkspacesCommand, {
+    payload: WorkspaceCommand,
+    success: WorkspaceCommandResult,
+    error: Schema.Union([WorkspaceError, EnvironmentAuthorizationError]),
   }),
   Rpc.make(FORK_WORKSPACE_WS_METHODS.forkSubscribeWorkspaces, {
     payload: Schema.Struct({}),
-    success: WorkspaceListEvent,
+    success: WorkspaceStateEvent,
     error: EnvironmentAuthorizationError,
     stream: true,
   }),
@@ -156,20 +192,14 @@ export const ForkWorkspaceRpcs = [
 ] as const;
 
 export const FORK_WORKSPACE_RPC_AGGREGATES = {
-  [FORK_WORKSPACE_WS_METHODS.forkWorkspacesCreate]: "fork-workspaces",
-  [FORK_WORKSPACE_WS_METHODS.forkWorkspacesArchive]: "fork-workspaces",
-  [FORK_WORKSPACE_WS_METHODS.forkWorkspacesUnarchive]: "fork-workspaces",
-  [FORK_WORKSPACE_WS_METHODS.forkWorkspacesRetry]: "fork-workspaces",
+  [FORK_WORKSPACE_WS_METHODS.forkWorkspacesCommand]: "fork-workspaces",
   [FORK_WORKSPACE_WS_METHODS.forkSubscribeWorkspaces]: "fork-workspaces",
   [FORK_WORKSPACE_WS_METHODS.forkSubscribeWorkspaceLog]: "fork-workspaces",
 } as const;
 
 /** Mutations the client checks before offering them; the server still authorizes. */
 export const FORK_WORKSPACE_CLIENT_SCOPES = {
-  [FORK_WORKSPACE_WS_METHODS.forkWorkspacesCreate]: AuthSourceControlWriteScope,
-  [FORK_WORKSPACE_WS_METHODS.forkWorkspacesArchive]: AuthSourceControlWriteScope,
-  [FORK_WORKSPACE_WS_METHODS.forkWorkspacesUnarchive]: AuthSourceControlWriteScope,
-  [FORK_WORKSPACE_WS_METHODS.forkWorkspacesRetry]: AuthSourceControlWriteScope,
+  [FORK_WORKSPACE_WS_METHODS.forkWorkspacesCommand]: AuthSourceControlWriteScope,
 } as const;
 
 export const FORK_WORKSPACE_READ_SCOPES = {

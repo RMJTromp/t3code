@@ -395,7 +395,10 @@ function ChatTab(props: {
           {props.marker !== null && !props.active ? (
             <span
               aria-label={unread ? "Unread" : "Unsent draft"}
-              className={cn("size-1.5 shrink-0 rounded-full", unread ? "bg-primary" : "bg-warning")}
+              className={cn(
+                "size-1.5 shrink-0 rounded-full",
+                unread ? "bg-primary" : "bg-warning/50",
+              )}
             />
           ) : null}
         </button>

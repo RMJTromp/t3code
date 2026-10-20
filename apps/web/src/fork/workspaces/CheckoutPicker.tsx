@@ -1,12 +1,20 @@
-import type { EnvironmentId, ProjectId, VcsRef, WorkspaceIssue } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ProjectId,
+  PullRequestState,
+  VcsRef,
+  WorkspaceIssue,
+} from "@t3tools/contracts";
 import { deriveLocalBranchNameFromRemoteRef } from "@t3tools/shared/git";
 import { LegendList } from "@legendapp/list/react";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { CircleDotIcon, GitBranchIcon, GitBranchPlusIcon, XIcon } from "lucide-react";
-import { type ComponentType, useDeferredValue, useRef, useState } from "react";
+import { type ComponentType, type ReactNode, useDeferredValue, useRef, useState } from "react";
 
-import { BranchPickerRefItem } from "../../components/BranchPicker";
 import { PullRequestGlyph } from "../../components/pullRequest/pullRequestIcons";
+import { resolvePullRequestState } from "../../components/pullRequest/pullRequestPresentation";
+import { cn } from "../../lib/utils";
+import { ForkIssueIcon } from "./hashMentionItems";
 import { sanitizeNewRefName } from "../../components/BranchToolbar.logic";
 import { Button } from "../../components/ui/button";
 import {
@@ -120,7 +128,14 @@ export function CheckoutPicker({
   }
   const pullRequestByKey = new Map<
     string,
-    { number: number; title: string; headBranch: string; baseBranch: string }
+    {
+      number: number;
+      title: string;
+      headBranch: string;
+      baseBranch: string;
+      state?: PullRequestState;
+      isDraft: boolean;
+    }
   >(pullRequests.items.map((entry) => [`#${entry.number}`, entry]));
   const issueByKey = new Map(issues.items.map((issue) => [`#${issue.number}`, issue]));
   const items =
@@ -263,38 +278,57 @@ export function CheckoutPicker({
                   }
                 }}
                 renderItem={({ item, index }) => {
-                  const ref = branchByName.get(item);
-                  if (tab === "branches" && ref) {
-                    // Git refuses a second checkout of a branch another folder holds.
+                  const ref = tab === "branches" ? branchByName.get(item) : undefined;
+                  if (ref) {
                     return (
-                      <BranchPickerRefItem
-                        branch={ref}
-                        projectCwd={cwd}
+                      <ComboboxItem
+                        hideIndicator
                         index={index}
+                        value={item}
+                        // Git refuses a second checkout of a branch another folder holds.
                         disabled={ref.worktreePath !== null}
                         onClick={() => select(item)}
-                      />
+                      >
+                        <PickerRow
+                          icon={<GitBranchIcon className="size-4 shrink-0 text-secondary-label" />}
+                          label={ref.name}
+                          badge={branchBadge(ref, cwd)}
+                        />
+                      </ComboboxItem>
                     );
                   }
                   const pullRequest = tab === "pullRequests" ? pullRequestByKey.get(item) : null;
                   const issue = tab === "issues" ? issueByKey.get(item) : null;
                   const title = pullRequest?.title ?? issue?.title;
-                  return title === undefined ? null : (
+                  if (title === undefined) return null;
+                  const presentation = pullRequest
+                    ? resolvePullRequestState({
+                        state: pullRequest.state ?? "open",
+                        isDraft: pullRequest.isDraft,
+                      })
+                    : null;
+                  return (
                     <ComboboxItem
                       hideIndicator
                       index={index}
                       value={item}
                       onClick={() => select(item)}
                     >
-                      <div className="flex w-full min-w-0 items-center gap-2">
-                        <span className="shrink-0 text-muted-foreground tabular-nums">{item}</span>
-                        <span className="min-w-0 flex-1 truncate">{title}</span>
-                        {pullRequest ? (
-                          <span className="max-w-32 shrink-0 truncate text-3xs text-muted-foreground/45">
-                            {pullRequest.headBranch}
-                          </span>
-                        ) : null}
-                      </div>
+                      <PickerRow
+                        icon={
+                          presentation ? (
+                            <presentation.Icon
+                              role="img"
+                              aria-label={presentation.label}
+                              className={cn("size-4 shrink-0", presentation.toneClassName)}
+                            />
+                          ) : (
+                            <ForkIssueIcon />
+                          )
+                        }
+                        label={item}
+                        description={title}
+                      />
                     </ComboboxItem>
                   );
                 }}
@@ -307,6 +341,45 @@ export function CheckoutPicker({
       </Combobox>
     </div>
   );
+}
+
+/** The `#` menu's row layout (ComposerCommandMenu), so both lists read the same. */
+function PickerRow({
+  icon,
+  label,
+  description,
+  badge,
+}: {
+  icon: ReactNode;
+  label: string;
+  description?: string;
+  badge?: string | null;
+}) {
+  return (
+    <span className="flex w-full min-w-0 items-center gap-2">
+      {icon}
+      <span
+        className={cn(
+          "min-w-0 shrink-0 truncate font-sans text-xs font-medium",
+          description !== undefined && "max-w-[45%]",
+        )}
+      >
+        {label}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-left text-secondary-label text-xs">
+        {description}
+      </span>
+      {badge ? <span className="shrink-0 text-3xs text-muted-foreground/45">{badge}</span> : null}
+    </span>
+  );
+}
+
+/** The same badges as upstream's branch picker rows. */
+function branchBadge(ref: VcsRef, projectCwd: string): string | null {
+  if (ref.current) return "current";
+  if (ref.worktreePath && ref.worktreePath !== projectCwd) return "worktree";
+  if (ref.isRemote) return "remote";
+  return ref.isDefault ? "default" : null;
 }
 
 /** A picked branch, pull request, or issue; its icon turns into a remove button on hover. */

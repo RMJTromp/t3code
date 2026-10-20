@@ -148,3 +148,31 @@ export function formatIssueForPrompt(issue: WorkspaceIssue): string {
   const content = body.length > 0 ? `${heading}\n\n${body}` : heading;
   return `${fence}md\n${content}\n${fence}\n\n`;
 }
+
+/**
+ * Pull requests and issues for a `#` query. Digits match the number's start,
+ * anything else the title; an exact number comes first, then newest first.
+ */
+export function matchHashReferences<T extends { readonly number: number; readonly title: string }>(
+  candidates: ReadonlyArray<T>,
+  query: string,
+  limit: number,
+): ReadonlyArray<T> {
+  const trimmed = query.trim().toLowerCase();
+  const byNumber = /^\d+$/.test(trimmed);
+  const exact = byNumber ? Number(trimmed) : null;
+  return candidates
+    .filter((candidate) =>
+      trimmed.length === 0
+        ? true
+        : byNumber
+          ? String(candidate.number).startsWith(trimmed)
+          : candidate.title.toLowerCase().includes(trimmed),
+    )
+    .toSorted(
+      (left, right) =>
+        Number(right.number === exact) - Number(left.number === exact) ||
+        right.number - left.number,
+    )
+    .slice(0, limit);
+}

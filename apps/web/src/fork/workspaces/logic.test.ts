@@ -5,6 +5,7 @@ import {
   accumulateWorkspaceLog,
   compactRelativeTime,
   formatIssueForPrompt,
+  matchHashReferences,
   workspaceLastActivity,
   neighbourAfterClose,
   routeNewThread,
@@ -155,5 +156,21 @@ describe("formatIssueForPrompt", () => {
     const formatted = formatIssueForPrompt({ ...issue, body: "```ts\nboom()\n```" });
     expect(formatted.startsWith("````md\n")).toBe(true);
     expect(formatted.endsWith("\n````\n\n")).toBe(true);
+  });
+});
+
+describe("matchHashReferences", () => {
+  const items = [
+    { number: 12, title: "Crash on start" },
+    { number: 120, title: "Docs" },
+    { number: 3, title: "Login crash" },
+  ];
+
+  it("matches a number's start and puts the exact number first", () => {
+    expect(matchHashReferences(items, "12", 10).map((item) => item.number)).toEqual([12, 120]);
+  });
+
+  it("matches titles otherwise, newest first", () => {
+    expect(matchHashReferences(items, "crash", 10).map((item) => item.number)).toEqual([12, 3]);
   });
 });

@@ -1,4 +1,9 @@
-import type { EnvironmentId, ProviderDriverKind, ServerProvider } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ProjectId,
+  ProviderDriverKind,
+  ServerProvider,
+} from "@t3tools/contracts";
 import {
   getProviderSkillsForSlashMenu,
   getProviderSlashCommandsForSlashMenu,
@@ -24,8 +29,14 @@ import {
 } from "../../components/ComposerPromptEditor";
 import {
   ComposerContextActionsContext,
-  EMPTY_COMPOSER_CONTEXT_RECORDS,
+  composerContextRecordsFromDraft,
 } from "../../components/composerContextPresentation";
+import { buildPullRequestReferenceContext } from "../../components/pullRequest/pullRequestDetail.logic";
+import { formatInlineContextReference } from "../../lib/composerContextReferences";
+import { reviewCommentContextReference } from "../../lib/composerContextRecords";
+import type { ReviewCommentContext } from "../../reviewCommentContext";
+import { usePullRequestList } from "../../state/pullRequests";
+import { forkIssueReference, useForkHashMenu } from "./hashMentions";
 import {
   collapseExpandedComposerCursor,
   composerSubmissionIntentForKey,
@@ -46,14 +57,16 @@ const noop = () => {};
 
 /**
  * The chat composer's prompt editor, with the trigger menus that make sense
- * before a thread exists: `@` files, `$` skills, and the provider's `/`
- * commands. Files are searched in the project's root checkout, since the
+ * before a thread exists: `@` files, `#` pull requests and issues, `$` skills,
+ * and the provider's `/` commands. A `#` pull request is upstream's chip, whose
+ * record the caller keeps in `reviewComments` and hands to the new draft. Files are searched in the project's root checkout, since the
  * worktree does not exist yet; mentions are relative, so they resolve in the
  * worktree too. The trigger glue is a slim copy of ChatComposer's.
  */
 export function NewWorkspacePromptEditor({
   editorRef,
   environmentId,
+  projectId,
   cwd,
   provider,
   providerKind,
@@ -61,12 +74,15 @@ export function NewWorkspacePromptEditor({
   showSkillsInSlashMenu,
   sendShortcut,
   value,
+  reviewComments,
+  onReviewCommentAdd,
   disabled,
   onChange,
   onSubmit,
 }: {
   editorRef: RefObject<ComposerPromptEditorHandle | null>;
   environmentId: EnvironmentId;
+  projectId: ProjectId;
   cwd: string;
   provider: ServerProvider | null;
   providerKind: ProviderDriverKind | null;
@@ -74,6 +90,8 @@ export function NewWorkspacePromptEditor({
   showSkillsInSlashMenu: boolean;
   sendShortcut?: Parameters<typeof composerSubmissionIntentForKey>[0]["sendShortcut"] | undefined;
   value: string;
+  reviewComments: ReadonlyArray<ReviewCommentContext>;
+  onReviewCommentAdd: (comment: ReviewCommentContext) => void;
   disabled: boolean;
   onChange: (value: string) => void;
   onSubmit: () => void;
@@ -99,8 +117,45 @@ export function NewWorkspacePromptEditor({
     query: isPathTrigger ? trigger.query : null,
   });
 
+  const hashMenu = useForkHashMenu({ environmentId, projectId, trigger });
+  // Without gh, `#` lists pull requests through upstream's source control, as the chat does.
+  const hashQuery = trigger?.kind === "pull-request" ? trigger.query.trim() : "";
+  const upstreamPullRequests = usePullRequestList(
+    trigger?.kind === "pull-request" && hashMenu.items === null
+      ? [
+          {
+            environmentId,
+            input: {
+              state: "open",
+              projectId,
+              limit: 20,
+              ...(hashQuery.length > 0 ? { query: hashQuery } : {}),
+            },
+          },
+        ]
+      : [],
+  );
+
   const items = ((): ComposerCommandItem[] => {
     if (!trigger) return [];
+    if (trigger.kind === "pull-request") {
+      if (hashMenu.items !== null) return [...hashMenu.items];
+      return (upstreamPullRequests.data?.entries ?? []).map((entry) => ({
+        id: `pull-request:${entry.projectId}:${entry.repository}:${entry.number}`,
+        type: "pull-request" as const,
+        pullRequest: {
+          number: entry.number,
+          title: entry.title,
+          url: entry.url,
+          headBranch: entry.headBranch,
+          baseBranch: entry.baseBranch,
+          state: entry.state,
+          isDraft: entry.isDraft,
+        },
+        label: `#${entry.number}`,
+        description: entry.title,
+      }));
+    }
     if (trigger.kind === "path") {
       return pathSearch.entries.map((entry) => ({
         id: `path:${entry.kind}:${entry.path}`,
@@ -169,10 +224,14 @@ export function NewWorkspacePromptEditor({
   const activeItem = items.find((item) => item.id === activeItemId) ?? null;
   // An empty `@` query is never searched; counting its debounce as loading
   // would open the menu for a moment and shut it again.
-  const isLoading = isPathTrigger && trigger.query.length > 0 && pathSearch.isPending;
-  // Open for any trigger, empty or not, as in the chat composer. Pull requests
-  // (#) are left to the dialog's own picker.
-  const menuVisible = trigger !== null && trigger.kind !== "pull-request";
+  const isLoading =
+    (isPathTrigger && trigger.query.length > 0 && pathSearch.isPending) ||
+    (trigger?.kind === "pull-request" &&
+      (hashMenu.items !== null
+        ? hashMenu.isLoading
+        : upstreamPullRequests.isPending && upstreamPullRequests.data === null));
+  // Open for any trigger, empty or not, as in the chat composer.
+  const menuVisible = trigger !== null;
   const emptyStateText =
     trigger?.kind === "path"
       ? trigger.query.length === 0
@@ -180,7 +239,9 @@ export function NewWorkspacePromptEditor({
         : "No matching files or folders."
       : trigger?.kind === "skill"
         ? "No skills found. Try / to browse provider commands."
-        : "No matching command.";
+        : trigger?.kind === "pull-request"
+          ? "No open pull request or issue matches."
+          : "No matching command.";
 
   const replace = (rangeStart: number, rangeEnd: number, replacement: string) => {
     const current = editorRef.current?.readSnapshot().value ?? value;
@@ -210,6 +271,18 @@ export function NewWorkspacePromptEditor({
     if (item.type === "path") {
       if (!isPathSuggestionCurrent(item.searchTarget, active, environmentId, cwd)) return;
       replace(active.rangeStart, active.rangeEnd, `${serializeComposerFileLink(item.path)} `);
+    } else if (item.type === "issue") {
+      const { comment, replacement } = forkIssueReference(item);
+      replace(active.rangeStart, active.rangeEnd, replacement);
+      onReviewCommentAdd(comment);
+    } else if (item.type === "pull-request") {
+      const comment = buildPullRequestReferenceContext(item.pullRequest);
+      replace(
+        active.rangeStart,
+        active.rangeEnd,
+        `${formatInlineContextReference(reviewCommentContextReference(comment))} `,
+      );
+      onReviewCommentAdd(comment);
     } else if (item.type === "skill") {
       replace(active.rangeStart, active.rangeEnd, `$${item.skill.name} `);
     } else if (item.type === "provider-slash-command") {
@@ -283,7 +356,7 @@ export function NewWorkspacePromptEditor({
         isPathQueryActive={() => currentTrigger()?.kind === "path"}
         value={value}
         cursor={cursor}
-        contextRecords={EMPTY_COMPOSER_CONTEXT_RECORDS}
+        contextRecords={composerContextRecordsFromDraft({ terminalContexts: [], reviewComments })}
         skills={skills}
         disabled={disabled}
         className="max-h-64 min-h-20"
@@ -305,7 +378,9 @@ export function NewWorkspacePromptEditor({
             resolvedTheme={resolvedTheme}
             isLoading={isLoading}
             triggerKind={trigger.kind}
-            emptyStateText={isLoading ? "Searching repository files..." : emptyStateText}
+            emptyStateText={
+              isLoading && isPathTrigger ? "Searching repository files..." : emptyStateText
+            }
             activeItemId={activeItem?.id ?? null}
             onHighlightedItemChange={(itemId) => setHighlighted({ itemId, searchKey })}
             onSelect={select}

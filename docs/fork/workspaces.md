@@ -11,7 +11,8 @@ Click **+** next to a repository in the sidebar to open the new-workspace compos
   open an empty chat instead. The footer picks that chat's model, reasoning, and access, like the
   chat composer.
 - The message box works like the chat composer: Markdown formats as you type, `@` mentions files
-  from the repository, and `$` or `/` insert the chosen agent's skills and commands. Files are
+  from the repository, `#` tags an open pull request or issue, and `$` or `/` insert the chosen
+  agent's skills and commands. Files are
   found in the repository's main folder, since the workspace's folder doesn't exist yet.
 - The repository menu at the top left switches repositories.
 - The branch next to it is the **target branch**, which the new branch starts from. It defaults
@@ -105,3 +106,12 @@ Archiving stops and tells you when:
 
 - The mobile app shows workspace chats in its normal thread list, without tabs.
 - Storage cleanup never removes a workspace's folder. Archive the workspace instead.
+
+## Tag pull requests and issues
+
+Type `#` in a chat's composer, or in the new-workspace composer, to list the repository's open pull
+requests and issues. Type a number to jump to it, or words to search titles. A pull request becomes
+a chip the agent receives with its branch and link; an issue becomes a chip with its title and
+link. Click a chip to open it. Both come from the
+GitHub CLI (`gh`); without it, `#` lists pull requests through **Settings → Source Control** as
+before, and issues are unavailable.

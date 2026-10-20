@@ -30,6 +30,7 @@ import { Command, CommandGroup, CommandItem, CommandList } from "../ui/command";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { ComposerBanner } from "./ComposerBanner";
 import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
+import { type ForkIssueCommandItem, ForkIssueIcon } from "../../fork/workspaces/hashMentionItems"; // fork:workspaces
 
 export type ComposerCommandItem =
   | {
@@ -71,6 +72,7 @@ export type ComposerCommandItem =
       label: string;
       description: string;
     }
+  | ForkIssueCommandItem // fork:workspaces
   | {
       id: string;
       type: "thread";
@@ -202,6 +204,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       {props.item.type === "thread" ? (
         <MessagesSquareIcon aria-hidden="true" className="size-4 shrink-0 text-secondary-label" />
       ) : null}
+      {props.item.type === "issue" ? <ForkIssueIcon /> : null /* fork:workspaces */}
       {pullRequestPresentation ? (
         <pullRequestPresentation.Icon
           role="img"

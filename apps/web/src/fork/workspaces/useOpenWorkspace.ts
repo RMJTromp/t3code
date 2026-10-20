@@ -11,6 +11,7 @@ import type {
 import { useNavigate } from "@tanstack/react-router";
 
 import { type DraftId, useComposerDraftStore } from "../../composerDraftStore";
+import type { ReviewCommentContext } from "../../reviewCommentContext";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { useClientSettings } from "../../hooks/useSettings";
 import {
@@ -114,6 +115,8 @@ export interface WorkspaceCreateOptions {
   readonly baseRef?: string;
   readonly checkout?: Extract<WorkspaceCommand, { type: "create" }>["checkout"];
   readonly prompt?: string;
+  /** Records behind `#` pull request chips in `prompt`. */
+  readonly reviewComments?: ReadonlyArray<ReviewCommentContext>;
   readonly modelSelection?: ModelSelection;
   readonly runtimeMode?: RuntimeMode;
 }
@@ -155,6 +158,10 @@ export function useCreateWorkspace() {
       const prompt = options.prompt?.trim() ?? "";
       if (prompt.length > 0) {
         drafts.setPrompt(opened.draftId, prompt);
+        // After the prompt, whose chips already reference them, so none are appended twice.
+        if (options.reviewComments !== undefined && options.reviewComments.length > 0) {
+          drafts.setReviewComments(opened.draftId, options.reviewComments);
+        }
         queueWorkspaceFirstSend(opened.threadId);
       }
     }

@@ -112,6 +112,7 @@ const decodeGhPullRequests = Schema.decodeUnknownEffect(
         url: Schema.String,
         headRefName: Schema.String,
         baseRefName: Schema.String,
+        isDraft: Schema.Boolean,
       }),
     ),
   ),
@@ -1012,7 +1013,7 @@ export const make = Effect.gen(function* () {
       "--limit",
       String(GH_LIST_LIMIT),
       "--json",
-      "number,title,url,headRefName,baseRefName",
+      "number,title,url,headRefName,baseRefName,isDraft",
       ...(query === undefined ? [] : ["--search", query]),
     ]);
     const pullRequests = yield* decodeGhPullRequests(stdout).pipe(

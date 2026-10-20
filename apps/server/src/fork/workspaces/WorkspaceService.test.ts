@@ -567,7 +567,7 @@ describe("WorkspaceService", () => {
       [
         "#!/bin/sh",
         'if [ "$1" = "pr" ]; then',
-        `  echo '[{"number":9,"title":"Fix crash","url":"https://example.com/9","headRefName":"fix","baseRefName":"main"}]'`,
+        `  echo '[{"number":9,"title":"Fix crash","url":"https://example.com/9","headRefName":"fix","baseRefName":"main","isDraft":true}]'`,
         'elif [ "$2" = "list" ]; then',
         `  echo '[{"number":7,"title":"Crash on start","url":"https://example.com/7"}]'`,
         'elif [ "$3" = "404" ]; then',
@@ -594,6 +594,7 @@ describe("WorkspaceService", () => {
           url: "https://example.com/9",
           headBranch: "fix",
           baseBranch: "main",
+          isDraft: true,
         },
       ]);
       const issue = yield* service.readIssue({ projectId: fixture.projectId, number: 7 });

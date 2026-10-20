@@ -47,6 +47,7 @@ import {
   PullRequestChip,
   UnresolvedChip,
 } from "./contextChipParts";
+import { ForkIssueContextChip, forkIssueContextNumber } from "../fork/workspaces/issueContext"; // fork:workspaces
 
 export type ComposerDraftContextRecord =
   | { kind: "terminal"; record: TerminalContextDraft }
@@ -392,6 +393,11 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
       render: (entry, context, definition) => {
         if (entry.kind !== "review-comment") {
           return <UnresolvedContextChip label={context.label} />;
+        }
+        // fork:workspaces
+        const forkIssueNumber = forkIssueContextNumber(entry.record);
+        if (forkIssueNumber !== null) {
+          return <ForkIssueContextChip record={entry.record} number={forkIssueNumber} />;
         }
         const isPullRequest = isPullRequestSummaryContext(entry.record);
         const pullRequestState = pullRequestContextDisplayState(entry.record) ?? "unknown";

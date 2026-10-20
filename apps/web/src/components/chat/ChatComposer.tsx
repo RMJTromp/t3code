@@ -1108,6 +1108,7 @@ import {
   resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
 import { searchProviderSkills } from "../../providerSkillSearch";
+import { forkIssueReference, useForkHashMenu } from "../../fork/workspaces/hashMentions"; // fork:workspaces
 import { useDelayedStatus } from "../../hooks/useDelayedStatus";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { useSoftwareKeyboardOpen } from "../../hooks/useSoftwareKeyboardOpen";
@@ -2592,7 +2593,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerPreviewAnnotations.length === 0 &&
     composerReviewComments.length === 0;
 
+  // fork:workspaces
+  const forkHashMenu = useForkHashMenu({
+    environmentId,
+    projectId: activeProjectId,
+    trigger: composerTrigger,
+  });
   const pullRequestListTargets =
+    forkHashMenu.items !== null || // fork:workspaces
     composerTriggerKind !== "pull-request" ||
     pullRequestProjectId === null ||
     (pullRequestTextQuery !== null && settledPullRequestTextQuery === null)
@@ -2630,7 +2638,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         entry.number === settledPullRequestNumber,
     ) === true;
   const exactPullRequestLookup = useEnvironmentQuery(
-    settledPullRequestNumber === null ||
+    forkHashMenu.items !== null || // fork:workspaces
+      settledPullRequestNumber === null ||
       pullRequestProjectId === null ||
       pullRequestRepository === null ||
       recentHasExactPullRequest
@@ -2748,6 +2757,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
       }));
     }
+    // fork:workspaces
+    if (composerTrigger.kind === "pull-request" && forkHashMenu.items !== null) {
+      return [...forkHashMenu.items];
+    }
     if (
       composerTrigger.kind === "pull-request" &&
       pullRequestProjectId !== null &&
@@ -2846,6 +2859,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
 
   const isComposerMenuLoading =
+    (forkHashMenu.items !== null && forkHashMenu.isLoading) || // fork:workspaces
     (composerTriggerKind === "path" && pathTriggerQuery.length > 0 && workspaceEntries.isPending) ||
     (composerTriggerKind === "pull-request" &&
       pullRequestProjectId !== null &&
@@ -2857,6 +2871,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerMenuEmptyState = (() => {
     if (composerTriggerKind === "skill") {
       return "No skills found. Try / to browse provider commands.";
+    }
+    // fork:workspaces
+    if (composerTriggerKind === "pull-request" && forkHashMenu.items !== null) {
+      return "No open pull request or issue matches.";
     }
     if (composerTriggerKind === "pull-request") {
       if (pullRequestProjectId === null || pullRequestRepository === null) {
@@ -3830,6 +3848,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     });
     const { snapshot, trigger } = resolveActiveComposerTrigger();
     if (!trigger) return;
+    // fork:workspaces
+    if (item.type === "issue") {
+      const { comment, replacement } = forkIssueReference(item);
+      const end = extendReplacementRangeForTrailingSpace(
+        snapshot.value,
+        trigger.rangeEnd,
+        replacement,
+      );
+      const expectedText = snapshot.value.slice(trigger.rangeStart, end);
+      if (applyPromptReplacement(trigger.rangeStart, end, replacement, { expectedText })) {
+        addComposerDraftReviewComment(composerDraftTarget, comment, { appendReference: false });
+        setComposerHighlightedItemId(null);
+      }
+      return;
+    }
     if (item.type === "path") {
       if (!isPathSuggestionCurrent(item.searchTarget, trigger, environmentId, gitCwd)) return;
       const replacement = `${serializeComposerFileLink(item.path)} `;

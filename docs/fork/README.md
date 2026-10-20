@@ -32,6 +32,7 @@ merge, walk this list to confirm each one is still reachable.
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------ |
 | Workspace sidebar          | Replaces upstream's sidebar: Workspaces by repository, sorted by activity with compact times, spinner and unread state, then Chats.                                | `e5d7f528c`, `3f91f1b27` |
 | Create a workspace         | **+** on a repository row opens a composer: prompt, model, target branch, a branch or PR to check out, or an issue (`gh`) to attach. ⌘/Ctrl-click creates at once. | `e5d7f528c`, `7167058b4` |
+| Tag PRs and issues         | `#` in the chat composer or the new-workspace composer lists open PRs and issues from `gh`; upstream lookup without it.                                            | —                        |
 | Chat tabs                  | Tabs under a workspace chat's header: **+**, close, history to reopen, right-click to mark unread, rename, close others.                                           | `e5d7f528c`              |
 | New chats join a workspace | New chat from the command palette or a shortcut opens in the workspace in view, or asks to create one. Each workspace keeps its draft.                             | `e5d7f528c`              |
 | Locked checkout            | Chats in a workspace cannot switch to another checkout in the branch toolbar.                                                                                      | `e5d7f528c`              |
@@ -57,6 +58,8 @@ lists archived workspaces, so no client reaches it.
 | `apps/server/src/storageCleanup.ts`                                               | Cleanup policies keep workspace worktrees.                                              |
 | `apps/web/src/components/AppSidebarLayout.tsx`                                    | Mount the workspace sidebar and dialogs.                                                |
 | `apps/web/src/components/ChatView.tsx`                                            | Mount the chat tabs; send the new-workspace composer's prompt once the worktree exists. |
+| `apps/web/src/components/chat/ChatComposer.tsx`, `ComposerCommandMenu.tsx`        | `#` suggestions come from `gh` when it works; issues are a fork menu item.              |
+| `apps/web/src/components/composerContextPresentation.tsx`                         | Issue references render as issue chips, in the composer and the timeline.               |
 | `apps/web/src/hooks/useHandleNewThread.ts`                                        | Route new project chats into a workspace and give each workspace its own draft.         |
 | `apps/web/src/hooks/useThreadActions.ts`                                          | Deleting a workspace's last chat never offers to delete its worktree.                   |
 | `apps/web/src/components/BranchToolbarEnvModeSelector.tsx`                        | Chats in a workspace cannot switch to another checkout.                                 |

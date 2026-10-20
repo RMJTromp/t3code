@@ -38,8 +38,8 @@ const useGhListCache = create<{
   readonly answers: Readonly<Record<string, GhListAnswer<GhListKind>>>;
 }>(() => ({ answers: {} }));
 const ghListKey = (
-  environmentId: EnvironmentId,
-  projectId: ProjectId,
+  environmentId: EnvironmentId | null,
+  projectId: ProjectId | null,
   kind: GhListKind,
   query: string,
 ) => JSON.stringify([environmentId, projectId, kind, query]);
@@ -53,13 +53,14 @@ const matchesQuery = (item: { number: number; title: string }, query: string) =>
  * when picked. While a search is in flight, the unsearched list is filtered here.
  */
 export function useGhList<K extends GhListKind>(input: {
-  readonly environmentId: EnvironmentId;
-  readonly projectId: ProjectId;
+  readonly environmentId: EnvironmentId | null;
+  readonly projectId: ProjectId | null;
   readonly kind: K;
   readonly query: string;
   readonly enabled: boolean;
 }) {
-  const { environmentId, projectId, kind, query, enabled } = input;
+  const { environmentId, projectId, kind, query } = input;
+  const enabled = input.enabled && environmentId !== null && projectId !== null;
   const command = useAtomCommand(forkWorkspaceEnvironment.command, { reportFailure: false });
   const key = ghListKey(environmentId, projectId, kind, query);
   const answer = useGhListCache((state) => state.answers[key]) as GhListAnswer<K> | undefined;
@@ -72,7 +73,7 @@ export function useGhList<K extends GhListKind>(input: {
     command(commandInput),
   );
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || environmentId === null || projectId === null) return;
     void list({
       environmentId,
       input: {

@@ -190,6 +190,7 @@ export const WorkspacePullRequest = Schema.Struct({
   url: Schema.String,
   headBranch: Schema.String,
   baseBranch: Schema.String,
+  isDraft: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type WorkspacePullRequest = typeof WorkspacePullRequest.Type;
 

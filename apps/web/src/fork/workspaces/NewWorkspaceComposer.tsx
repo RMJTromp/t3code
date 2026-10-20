@@ -47,6 +47,9 @@ import { useEnvironmentProviders } from "../../state/environments";
 import { usePaginatedBranches } from "../../state/queries";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { type CheckoutChoice, CheckoutPicker } from "./CheckoutPicker";
+import { collectInlineContextIds } from "../../lib/composerContextReferences";
+import { reviewCommentContextId } from "../../lib/composerContextRecords";
+import type { ReviewCommentContext } from "../../reviewCommentContext";
 import { useReadIssue } from "./github";
 import { NewWorkspacePromptEditor } from "./NewWorkspacePromptEditor";
 import { formatIssueForPrompt } from "./logic";
@@ -174,6 +177,8 @@ function ProjectComposer({
   const [creating, setCreating] = useState(false);
   const [checkout, setCheckout] = useState<CheckoutChoice | null>(null);
   const [issue, setIssue] = useState<WorkspaceIssue | null>(null);
+  // Records behind `#` pull request chips in the prompt; ChatView sends them with it.
+  const [reviewComments, setReviewComments] = useState<ReadonlyArray<ReviewCommentContext>>([]);
   // The markdown appended for the attached issue, so detaching removes exactly it.
   const [issueBlock, setIssueBlock] = useState<string | null>(null);
   const [loadingIssue, setLoadingIssue] = useState(false);
@@ -279,6 +284,10 @@ function ProjectComposer({
       ...(localBase.length > 0 ? { baseRef: localBase } : {}),
       checkout: checkoutInput,
       prompt,
+      // Only chips still in the prompt; a deleted chip leaves its record behind.
+      reviewComments: reviewComments.filter((comment) =>
+        collectInlineContextIds(prompt).includes(reviewCommentContextId(comment.id)),
+      ),
       ...(selection ? { modelSelection: selection } : {}),
       runtimeMode,
     });
@@ -319,6 +328,7 @@ function ProjectComposer({
         <NewWorkspacePromptEditor
           editorRef={editorRef}
           environmentId={environmentId}
+          projectId={project.id}
           cwd={project.workspaceRoot}
           provider={activeEntry?.snapshot ?? null}
           providerKind={activeEntry?.driverKind ?? null}
@@ -326,6 +336,13 @@ function ProjectComposer({
           showSkillsInSlashMenu={settings.showSkillsInSlashMenu}
           sendShortcut={settings.sendShortcut}
           value={prompt}
+          reviewComments={reviewComments}
+          onReviewCommentAdd={(comment) =>
+            setReviewComments((current) => [
+              ...current.filter((entry) => entry.id !== comment.id),
+              comment,
+            ])
+          }
           disabled={creating}
           onChange={setPrompt}
           onSubmit={() => void submit()}

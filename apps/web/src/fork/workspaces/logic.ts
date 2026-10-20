@@ -1,5 +1,6 @@
 import {
   normalizeWorkspacePath,
+  type OrchestrationV2AppThreadLineage,
   type ProjectId,
   type Workspace,
   type WorkspaceIssue,
@@ -28,11 +29,39 @@ export function workspaceForPath(
   );
 }
 
-interface WorkspaceThreadCandidate {
+interface ThreadLineageCandidate {
+  readonly id: string;
+  readonly lineage: {
+    readonly parentThreadId: string | null;
+    readonly relationshipToParent: OrchestrationV2AppThreadLineage["relationshipToParent"];
+  };
+}
+
+interface WorkspaceThreadCandidate extends ThreadLineageCandidate {
   readonly projectId: ProjectId;
   readonly worktreePath: string | null;
   readonly archivedAt: string | null;
   readonly createdAt: string;
+}
+
+/** Subagent chats belong to the chat that spawned them, not to the user's tabs. */
+export function isUserChat(thread: Pick<ThreadLineageCandidate, "lineage">): boolean {
+  return thread.lineage.relationshipToParent !== "subagent";
+}
+
+/** The user chat a chat descends from through subagents: itself unless it is a subagent. */
+export function owningUserChatId<T extends ThreadLineageCandidate>(
+  threads: ReadonlyArray<T>,
+  threadId: string,
+): T["id"] | null {
+  let current = threads.find((thread) => thread.id === threadId);
+  // Bounded by the thread count so a malformed parent cycle cannot spin.
+  for (let hops = 0; current && hops <= threads.length; hops += 1) {
+    if (isUserChat(current)) return current.id;
+    const parentId = current.lineage.parentThreadId;
+    current = parentId === null ? undefined : threads.find((thread) => thread.id === parentId);
+  }
+  return null;
 }
 
 /** A workspace's chats are its project's threads that run in its folder. */
@@ -44,6 +73,7 @@ export function threadsForWorkspace<T extends WorkspaceThreadCandidate>(
     .filter(
       (thread) =>
         thread.archivedAt === null &&
+        isUserChat(thread) &&
         thread.projectId === workspace.projectId &&
         sameWorkspacePath(thread.worktreePath, workspace.worktreePath),
     )
@@ -59,6 +89,7 @@ export function unassignedProjectThreads<T extends WorkspaceThreadCandidate>(
   return threads.filter(
     (thread) =>
       thread.archivedAt === null &&
+      isUserChat(thread) &&
       thread.projectId === projectId &&
       !workspaces.some(
         (workspace) =>

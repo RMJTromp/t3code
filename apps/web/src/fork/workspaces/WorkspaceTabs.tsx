@@ -30,7 +30,9 @@ import { BrailleSpinner } from "./BrailleSpinner";
 import { showScriptTerminal } from "./RunScriptMenu";
 import { useWorkspaceLastLocation } from "./lastLocation";
 import {
+  isUserChat,
   neighbourAfterClose,
+  owningUserChatId,
   sameWorkspacePath,
   threadsForWorkspace,
   workspaceAcceptsChats,
@@ -90,10 +92,15 @@ function WorkspaceTabStrip({
     reportFailure: false,
   });
   const attentionOf = useThreadAttention();
-  const members = threadsForWorkspace(
-    useThreadShells().filter((thread) => thread.environmentId === environmentId),
-    workspace,
+  const environmentThreads = useThreadShells().filter(
+    (thread) => thread.environmentId === environmentId,
   );
+  const members = threadsForWorkspace(environmentThreads, workspace);
+  // A subagent chat has no tab of its own; its spawning chat's tab stands in for it.
+  const activeTabId =
+    activeThreadId === null
+      ? null
+      : (owningUserChatId(environmentThreads, activeThreadId) ?? activeThreadId);
   const draftKey = useWorkspaceDraftKey()(environmentId, workspace);
   // Subscribe to a primitive: the lookup builds a new session object per call,
   // which as a selector result would re-render forever.
@@ -111,10 +118,10 @@ function WorkspaceTabStrip({
     remember(
       workspace.id,
       activeDraftId === null
-        ? { kind: "thread", threadId: activeThreadId! }
+        ? { kind: "thread", threadId: activeTabId! }
         : { kind: "draft", draftId: activeDraftId },
     );
-  }, [remember, workspace.id, activeDraftId, activeThreadId]);
+  }, [remember, workspace.id, activeDraftId, activeTabId]);
 
   // Setup streams into this chat's terminal; reveal it once, as setup starts.
   const setupTerminal = workspace.setupTerminal;
@@ -158,7 +165,7 @@ function WorkspaceTabStrip({
   /** Closing archives the chat; the history menu brings it back. */
   const closeChats = async (threadIds: ReadonlyArray<ThreadId>) => {
     const closing = new Set<string>(threadIds);
-    const activeKey = activeThreadId ?? NEW_CHAT_KEY;
+    const activeKey = activeTabId ?? NEW_CHAT_KEY;
     if (closing.has(activeKey)) {
       // Leave first: upstream's archive opens a fresh draft when it closes the
       // chat in view.
@@ -209,7 +216,7 @@ function WorkspaceTabStrip({
   const tabListRef = useRef<HTMLDivElement>(null);
   const onTabKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (tabKeys.length === 0) return;
-    const index = tabKeys.indexOf(activeThreadId ?? NEW_CHAT_KEY);
+    const index = tabKeys.indexOf(activeTabId ?? NEW_CHAT_KEY);
     const target =
       event.key === "ArrowRight"
         ? (index + 1) % tabKeys.length
@@ -241,7 +248,7 @@ function WorkspaceTabStrip({
               key={thread.id}
               title={thread.title}
               attention={attentionOf(thread)}
-              active={thread.id === activeThreadId}
+              active={thread.id === activeTabId}
               renaming={renamingId === thread.id}
               onSelect={() => void openThread(environmentId, thread.id)}
               onClose={() => void closeChats([thread.id])}
@@ -366,6 +373,7 @@ function ClosedChatsMenu({
     .flatMap((entry) => entry.snapshot.threads)
     .filter(
       (thread) =>
+        isUserChat(thread) &&
         thread.projectId === workspace.projectId &&
         sameWorkspacePath(thread.worktreePath, workspace.worktreePath),
     );

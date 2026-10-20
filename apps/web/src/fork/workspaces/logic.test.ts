@@ -8,6 +8,7 @@ import {
   matchHashReferences,
   workspaceLastActivity,
   neighbourAfterClose,
+  owningUserChatId,
   routeNewThread,
   threadsForWorkspace,
   unassignedProjectThreads,
@@ -41,13 +42,22 @@ function workspace(overrides: Partial<Workspace> = {}): Workspace {
 const thread = (
   id: string,
   worktreePath: string | null,
-  overrides: { archivedAt?: string | null; createdAt?: string; projectId?: ProjectId } = {},
+  overrides: {
+    archivedAt?: string | null;
+    createdAt?: string;
+    projectId?: ProjectId;
+    subagentOf?: string;
+  } = {},
 ) => ({
   id,
   projectId: overrides.projectId ?? projectId,
   worktreePath,
   archivedAt: overrides.archivedAt ?? null,
   createdAt: overrides.createdAt ?? "2026-10-19T00:00:00.000Z",
+  lineage: {
+    parentThreadId: overrides.subagentOf ?? null,
+    relationshipToParent: overrides.subagentOf === undefined ? null : ("subagent" as const),
+  },
 });
 
 describe("threadsForWorkspace", () => {
@@ -57,7 +67,9 @@ describe("threadsForWorkspace", () => {
       thread("earlier", "/worktrees/repo/oslo", { createdAt: "2026-10-19T01:00:00.000Z" }),
       thread("archived", "/worktrees/repo/oslo", { archivedAt: "2026-10-19T03:00:00.000Z" }),
       thread("other-project", "/worktrees/repo/oslo", { projectId: ProjectId.make("other") }),
+      thread("helper", "/worktrees/repo/oslo", { subagentOf: "earlier" }),
       thread("root", "/repo"),
+      thread("root-helper", "/repo", { subagentOf: "root" }),
     ];
     expect(threadsForWorkspace(threads, workspace()).map((entry) => entry.id)).toEqual([
       "earlier",
@@ -66,6 +78,18 @@ describe("threadsForWorkspace", () => {
     expect(unassignedProjectThreads(threads, projectId, [workspace()]).map((t) => t.id)).toEqual([
       "root",
     ]);
+  });
+
+  it("finds the user chat behind nested subagents", () => {
+    const threads = [
+      thread("lead", "/worktrees/repo/oslo"),
+      thread("helper", "/worktrees/repo/oslo", { subagentOf: "lead" }),
+      thread("helper-of-helper", "/worktrees/repo/oslo", { subagentOf: "helper" }),
+      thread("orphan", "/worktrees/repo/oslo", { subagentOf: "missing" }),
+    ];
+    expect(owningUserChatId(threads, "helper-of-helper")).toBe("lead");
+    expect(owningUserChatId(threads, "lead")).toBe("lead");
+    expect(owningUserChatId(threads, "orphan")).toBeNull();
   });
 });
 

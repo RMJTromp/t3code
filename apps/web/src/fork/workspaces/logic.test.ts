@@ -126,15 +126,32 @@ describe("neighbourAfterClose", () => {
 });
 
 describe("workspace activity", () => {
-  it("uses the newest chat update, else the creation time", () => {
+  it("uses the newest turn end, else the creation time", () => {
     const created = { createdAt: "2026-10-19T00:00:00.000Z" };
+    const run = (requestedAt: string, completedAt: string | null) => ({
+      createdAt: created.createdAt,
+      latestRun: { requestedAt, completedAt },
+    });
     expect(workspaceLastActivity(created, [])).toBe(created.createdAt);
     expect(
       workspaceLastActivity(created, [
-        { updatedAt: "2026-10-19T02:00:00.000Z" },
-        { updatedAt: "2026-10-19T05:00:00.000Z" },
+        run("2026-10-19T01:00:00.000Z", "2026-10-19T02:00:00.000Z"),
+        run("2026-10-19T04:00:00.000Z", "2026-10-19T05:00:00.000Z"),
       ]),
     ).toBe("2026-10-19T05:00:00.000Z");
+  });
+
+  it("holds a working chat at the time its turn was asked for", () => {
+    const created = { createdAt: "2026-10-19T00:00:00.000Z" };
+    expect(
+      workspaceLastActivity(created, [
+        {
+          createdAt: created.createdAt,
+          latestRun: { requestedAt: "2026-10-19T03:00:00.000Z", completedAt: null },
+        },
+        { createdAt: created.createdAt, latestRun: null },
+      ]),
+    ).toBe("2026-10-19T03:00:00.000Z");
   });
 
   it("drops the ago suffix", () => {

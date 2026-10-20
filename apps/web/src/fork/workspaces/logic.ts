@@ -118,15 +118,32 @@ export function neighbourAfterClose(
   return keys[index + 1] ?? keys[index - 1] ?? null;
 }
 
-/** Any chat update counts as activity; a workspace without chats dates from its creation. */
+interface ThreadRunTimes {
+  readonly createdAt: string;
+  readonly latestRun: {
+    readonly requestedAt: string | null;
+    readonly completedAt: string | null;
+  } | null;
+}
+
+/**
+ * When a chat last handed control back: its latest turn's end, or while a turn
+ * runs, when it was asked for. Tool calls and streaming never move it, so
+ * working agents hold their place instead of reshuffling the list.
+ */
+export function threadLastTurnAt(thread: ThreadRunTimes): string {
+  return thread.latestRun?.completedAt ?? thread.latestRun?.requestedAt ?? thread.createdAt;
+}
+
+/** A workspace's newest chat hand-back; a workspace without chats dates from its creation. */
 export function workspaceLastActivity(
   workspace: Pick<Workspace, "createdAt">,
-  members: ReadonlyArray<{ readonly updatedAt: string }>,
+  members: ReadonlyArray<ThreadRunTimes>,
 ): string {
-  return members.reduce(
-    (latest, thread) => (thread.updatedAt > latest ? thread.updatedAt : latest),
-    workspace.createdAt,
-  );
+  return members.reduce((latest, thread) => {
+    const at = threadLastTurnAt(thread);
+    return at > latest ? at : latest;
+  }, workspace.createdAt);
 }
 
 /** "3h ago" → "3h", "just now" → "now", as upstream's sidebar shortens it. */

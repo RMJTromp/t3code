@@ -41,6 +41,7 @@ import {
   sameWorkspacePath,
   threadsForWorkspace,
   unassignedProjectThreads,
+  threadLastTurnAt,
   workspaceLastActivity,
 } from "./logic";
 import { useEnvironmentWorkspaces } from "./state";
@@ -84,7 +85,7 @@ export default function WorkspaceSidebar() {
             project.environmentId === thread.environmentId,
         ),
     )
-    .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    .toSorted((left, right) => threadLastTurnAt(right).localeCompare(threadLastTurnAt(left)));
   const chatEnvironmentId = scratchEnvironmentId(active.environmentId ?? primaryEnvironmentId);
 
   return (

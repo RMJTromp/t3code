@@ -1,9 +1,8 @@
 import { CircleDotIcon } from "lucide-react";
-import { use } from "react";
 
 import { ContextChip, ContextChipLabel } from "../../components/ContextChip";
-import { ComposerContextActionsContext } from "../../components/composerContextPresentation";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
+import { useOpenPrLink } from "../../lib/openPullRequestLink";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 
 /**
@@ -45,15 +44,22 @@ export function forkIssueContextNumber(record: { readonly sectionId: string }): 
   return Number.isSafeInteger(number) && number > 0 ? number : null;
 }
 
-/** Looks like an open pull request's chip, with the issue icon; clicking opens the issue. */
+/**
+ * Looks like an open pull request's chip, with the issue icon; clicking opens
+ * the issue. The composer and the timeline both render this one, so a sent
+ * message shows the chip it was written with. It opens the link itself, since
+ * the two surfaces provide their open actions through different contexts.
+ */
 export function ForkIssueContextChip({
   record,
   number,
+  copyMarkdown,
 }: {
-  record: ReviewCommentContext;
+  record: { readonly filePath: string; readonly rangeLabel: string };
   number: number;
+  copyMarkdown?: string;
 }) {
-  const actions = use(ComposerContextActionsContext);
+  const openLink = useOpenPrLink();
   return (
     <Tooltip>
       <TooltipTrigger
@@ -62,8 +68,9 @@ export function ForkIssueContextChip({
             kind="pr-open"
             render={<button type="button" />}
             aria-label={`Open issue #${number}: ${record.rangeLabel}`}
-            onClick={(event) => actions.openPullRequest(event, record.filePath)}
-            onAuxClick={(event) => actions.openPullRequest(event, record.filePath)}
+            data-markdown-copy={copyMarkdown}
+            onClick={(event) => openLink(event, record.filePath)}
+            onAuxClick={(event) => openLink(event, record.filePath)}
           >
             <CircleDotIcon />
             <ContextChipLabel>{`#${number}`}</ContextChipLabel>

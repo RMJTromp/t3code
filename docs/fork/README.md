@@ -47,24 +47,24 @@ lists archived workspaces, so no client reaches it.
 
 ## Touch points
 
-| File                                                                              | Why                                                                                     |
-| --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `packages/contracts/src/{index,rpc,clientRpcPermissions}.ts`                      | Export and register the workspace RPCs and client scopes.                               |
-| `packages/client-runtime/src/rpc/client.ts`                                       | Let clients subscribe to the two workspace streams.                                     |
-| `apps/server/src/server.ts`, `ws.ts`, `ws.test.ts`                                | Provide the workspace layer and its RPC handlers.                                       |
-| `apps/server/src/auth/RpcAuthorization.ts`, `observability/RpcInstrumentation.ts` | Scopes and metrics tags for the new RPCs.                                               |
-| `apps/server/src/project/ProjectSetupScriptRunner.ts`                             | A workspace runs its setup once; new chats in it skip the project's setup action.       |
-| `apps/server/src/git/GitWorkflowService.ts`                                       | Refuse to remove a live workspace's worktree from anywhere but its own archive.         |
-| `apps/server/src/storageCleanup.ts`                                               | Cleanup policies keep workspace worktrees.                                              |
-| `apps/web/src/components/AppSidebarLayout.tsx`                                    | Mount the workspace sidebar and dialogs.                                                |
-| `apps/web/src/components/ChatView.tsx`                                            | Mount the chat tabs; send the new-workspace composer's prompt once the worktree exists. |
-| `apps/web/src/components/chat/ChatComposer.tsx`, `ComposerCommandMenu.tsx`        | `#` suggestions come from `gh` when it works; issues are a fork menu item.              |
-| `apps/web/src/components/composerContextPresentation.tsx`                         | Issue references render as issue chips, in the composer and the timeline.               |
-| `apps/web/src/hooks/useHandleNewThread.ts`                                        | Route new project chats into a workspace and give each workspace its own draft.         |
-| `apps/web/src/hooks/useThreadActions.ts`                                          | Deleting a workspace's last chat never offers to delete its worktree.                   |
-| `apps/web/src/components/BranchToolbarEnvModeSelector.tsx`                        | Chats in a workspace cannot switch to another checkout.                                 |
-| `apps/web/src/components/settings/ProjectSettingsPanel.tsx`                       | Mount the Workspace scripts section on a project's settings page.                       |
-| `apps/web/src/components/RightPanelTabs.tsx`                                      | Mount the Run script menu in the right panel's "+" menu and empty screen.               |
+| File                                                                                   | Why                                                                                     |
+| -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `packages/contracts/src/{index,rpc,clientRpcPermissions}.ts`                           | Export and register the workspace RPCs and client scopes.                               |
+| `packages/client-runtime/src/rpc/client.ts`                                            | Let clients subscribe to the two workspace streams.                                     |
+| `apps/server/src/server.ts`, `ws.ts`, `ws.test.ts`                                     | Provide the workspace layer and its RPC handlers.                                       |
+| `apps/server/src/auth/RpcAuthorization.ts`, `observability/RpcInstrumentation.ts`      | Scopes and metrics tags for the new RPCs.                                               |
+| `apps/server/src/project/ProjectSetupScriptRunner.ts`                                  | A workspace runs its setup once; new chats in it skip the project's setup action.       |
+| `apps/server/src/git/GitWorkflowService.ts`                                            | Refuse to remove a live workspace's worktree from anywhere but its own archive.         |
+| `apps/server/src/storageCleanup.ts`                                                    | Cleanup policies keep workspace worktrees.                                              |
+| `apps/web/src/components/AppSidebarLayout.tsx`                                         | Mount the workspace sidebar and dialogs.                                                |
+| `apps/web/src/components/ChatView.tsx`                                                 | Mount the chat tabs; send the new-workspace composer's prompt once the worktree exists. |
+| `apps/web/src/components/chat/ChatComposer.tsx`, `ComposerCommandMenu.tsx`             | `#` suggestions come from `gh` when it works; issues are a fork menu item.              |
+| `apps/web/src/components/composerContextPresentation.tsx`, `chat/MessagesTimeline.tsx` | Issue references render as the same issue chip in the composer and in sent messages.    |
+| `apps/web/src/hooks/useHandleNewThread.ts`                                             | Route new project chats into a workspace and give each workspace its own draft.         |
+| `apps/web/src/hooks/useThreadActions.ts`                                               | Deleting a workspace's last chat never offers to delete its worktree.                   |
+| `apps/web/src/components/BranchToolbarEnvModeSelector.tsx`                             | Chats in a workspace cannot switch to another checkout.                                 |
+| `apps/web/src/components/settings/ProjectSettingsPanel.tsx`                            | Mount the Workspace scripts section on a project's settings page.                       |
+| `apps/web/src/components/RightPanelTabs.tsx`                                           | Mount the Run script menu in the right panel's "+" menu and empty screen.               |
 
 ## Merging upstream
 

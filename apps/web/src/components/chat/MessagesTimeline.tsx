@@ -310,6 +310,7 @@ import {
   formatReviewCommentFence,
   type ReviewCommentContext,
 } from "../../reviewCommentContext";
+import { ForkIssueContextChip, forkIssueContextNumber } from "../../fork/workspaces/issueContext"; // fork:workspaces
 
 interface TimelineRowSharedState {
   citationRequest: AssistantCitationTarget | null;
@@ -4511,6 +4512,17 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
       render: (record, context) => {
         if (record.kind !== "review-comment") {
           return <UnavailableUserMessageContextChip {...context} />;
+        }
+        // fork:workspaces
+        const forkIssueNumber = forkIssueContextNumber(record);
+        if (forkIssueNumber !== null) {
+          return (
+            <ForkIssueContextChip
+              record={record}
+              number={forkIssueNumber}
+              copyMarkdown={context.copyMarkdown}
+            />
+          );
         }
         const isPullRequest = isPullRequestSummaryContext(record);
         const label = reviewCommentContextLabel(record);

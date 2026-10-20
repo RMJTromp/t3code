@@ -29,11 +29,8 @@ import { type DraftId } from "../composerDraftStore";
 import { openDiffFilePrimaryAction } from "../diffFileActions";
 import { useCheckpointDiff } from "~/lib/checkpointDiffState";
 import { cn } from "~/lib/utils";
-import {
-  selectThreadDiffPanelSelection,
-  useDiffPanelSessionStore,
-  useDiffPanelStore,
-} from "../diffPanelStore";
+import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../diffPanelStore";
+import { useForkDiffFolds } from "../fork/diff/diffDefaults"; // fork:diff-defaults
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useRenderedAppearance } from "../hooks/useTheme";
 import { useStableCallback } from "../hooks/useStableCallback";
@@ -114,8 +111,6 @@ function getCachedFileEntry(fileDiff: FileDiffMetadata) {
   fileEntryCache.set(fileDiff, entry);
   return entry;
 }
-
-const EMPTY_COLLAPSED_DIFF_FILE_KEYS: ReadonlySet<string> = new Set();
 
 function DiffFileCollapseToggle({
   filePath,
@@ -506,21 +501,11 @@ export default function DiffPanel({
   const isRefreshingDiff = branchDiffPreview.isPending || areFilePatchesPending;
   const renderableFileEntries = renderableFiles.map(getCachedFileEntry);
   const diffFileKeys = renderableFileEntries.map((file) => file.fileKey);
-  const defaultCollapsedDiffFileKeys = settings.diffFilesCollapsed
-    ? new Set(diffFileKeys)
-    : EMPTY_COLLAPSED_DIFF_FILE_KEYS;
-  const storedCollapsedDiffFileKeys = useDiffPanelSessionStore((state) =>
-    collapseScopeKey ? state.collapsedFileKeysByScopeKey[collapseScopeKey] : undefined,
-  );
-  const collapsedDiffFileKeys = storedCollapsedDiffFileKeys ?? defaultCollapsedDiffFileKeys;
-  const updateCollapsedDiffFiles = (
-    update: (current: ReadonlySet<string>) => ReadonlySet<string>,
-  ) => {
-    if (!collapseScopeKey) return;
-    useDiffPanelSessionStore
-      .getState()
-      .updateCollapsedFileKeys(collapseScopeKey, defaultCollapsedDiffFileKeys, update);
-  };
+  const { collapsed: collapsedDiffFileKeys, update: updateCollapsedDiffFiles } = useForkDiffFolds(
+    collapseScopeKey,
+    diffFileKeys,
+    settings.diffFilesCollapsed,
+  ); // fork:diff-defaults
   const renderLoadingBoundary = () =>
     settledFileCount < renderableFiles.length ? (
       <DiffFileLoadingBoundary

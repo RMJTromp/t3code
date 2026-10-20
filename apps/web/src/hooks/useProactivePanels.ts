@@ -2,6 +2,7 @@ import type { RunId, ScopedThreadRef, ThreadLinkedPullRequest } from "@t3tools/c
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useEffect, useRef } from "react";
 import { useDiffPanelStore } from "../diffPanelStore";
+import { FORK_DIFF_OPEN_SCOPE } from "../fork/diff/diffDefaults"; // fork:diff-defaults
 import {
   selectActiveRightPanelSurface,
   pullRequestSurface,
@@ -185,7 +186,7 @@ export function useProactivePanels(input: {
     ) {
       return;
     }
-    useDiffPanelStore.getState().selectGitScope(threadRef, "branch");
+    useDiffPanelStore.getState().selectGitScope(threadRef, FORK_DIFF_OPEN_SCOPE); // fork:diff-defaults
     onDiffPanelOpen?.();
   }, [
     activeLatestRun?.runId,

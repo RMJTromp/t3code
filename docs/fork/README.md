@@ -23,6 +23,27 @@ merging upstream stays a routine pull.
 
 Deleting the tagged lines and the `fork/` folders restores upstream behavior.
 
+## Features
+
+Every fork feature, where a user reaches it, and the commit that introduced it. After an upstream
+merge, walk this list to confirm each one is still reachable.
+
+| Feature                    | How to reach it                                                                                                                        | Commits                  |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| Workspace sidebar          | Replaces upstream's sidebar: Workspaces by repository, sorted by activity with compact times, spinner and unread state, then Chats.    | `e5d7f528c`, `3f91f1b27` |
+| Create a workspace         | **+** on a repository row, or **+** next to **Workspaces**. City-named worktree on a prefixed branch, setup in a right-panel terminal. | `e5d7f528c`, `7167058b4` |
+| Chat tabs                  | Tabs under a workspace chat's header: **+**, close, history to reopen, right-click to mark unread, rename, close others.               | `e5d7f528c`              |
+| New chats join a workspace | New chat from the command palette or a shortcut opens in the workspace in view, or asks to create one. Each workspace keeps its draft. | `e5d7f528c`              |
+| Locked checkout            | Chats in a workspace cannot switch to another checkout in the branch toolbar.                                                          | `e5d7f528c`              |
+| Archive a workspace        | Archive button on a workspace row. One click; script, uncommitted-file, and running-agent failures arrive as toasts.                   | `e5d7f528c`, `06b1132ca` |
+| Workspace scripts          | Cog on a repository row, or **Settings → Projects**: setup, archive, and named scripts. Settings win over `t3.json`.                   | `3f91f1b27`              |
+| Run script                 | Right panel's **+** menu and empty screen. Runs a named script in a terminal; the workspace row shows its name while it runs.          | `3f91f1b27`, `fee04f460` |
+| Setup failure output       | Warning icon on a workspace row whose setup failed; opens the output with retry.                                                       | `e5d7f528c`              |
+| Server guards              | Setup runs once per workspace, storage cleanup keeps workspace worktrees, and only archive may remove one.                             | `e5d7f528c`              |
+
+Restore is implemented on the server (`unarchive`), but since `06b1132ca` the sidebar no longer
+lists archived workspaces, so no client reaches it.
+
 ## Touch points
 
 | File                                                                              | Why                                                                               |
@@ -40,7 +61,7 @@ Deleting the tagged lines and the `fork/` folders restores upstream behavior.
 | `apps/web/src/hooks/useThreadActions.ts`                                          | Deleting a workspace's last chat never offers to delete its worktree.             |
 | `apps/web/src/components/BranchToolbarEnvModeSelector.tsx`                        | Chats in a workspace cannot switch to another checkout.                           |
 | `apps/web/src/components/settings/ProjectSettingsPanel.tsx`                       | Mount the Workspace scripts section on a project's settings page.                 |
-| `apps/web/src/components/RightPanelTabs.tsx`                                      | Mount the Run script menu in the right panel's tab bar and empty screen.          |
+| `apps/web/src/components/RightPanelTabs.tsx`                                      | Mount the Run script menu in the right panel's "+" menu and empty screen.         |
 
 ## Merging upstream
 

@@ -38,7 +38,7 @@ repository, to reach **Workspace scripts**. Each project has its own.
   the right panel. Only your script's output shows there.
 - **Archive script** runs before a workspace's folder is removed.
 - **Scripts** are extra named commands, such as `dev`. Run one from **Run script** in the right
-  panel, in its tab bar or on its empty screen. It runs in a terminal in the right panel of the
+  panel's **+** menu or on its empty screen. It runs in a terminal in the right panel of the
   chat you're viewing, and the workspace shows its name in blue while it runs. Press `Ctrl+C` in
   the terminal, or close its tab, to stop it.
 
@@ -61,21 +61,18 @@ Scripts receive `T3_WORKSPACE_NAME`, `T3_WORKSPACE_PATH`, `T3_ROOT_PATH` (the ma
 `T3_DEFAULT_BRANCH`, `T3CODE_PROJECT_ROOT`, and `T3CODE_WORKTREE_PATH`. If setup fails, the
 workspace shows a warning icon in the sidebar; click it to see the output.
 
-## Archive and restore
+## Archive a workspace
 
-Hover a workspace in the sidebar and click its archive button, then confirm.
-Archiving runs the archive script, archives the workspace's chats, and removes the folder. The
-branch is kept.
+Hover a workspace in the sidebar and click its archive button. Archiving runs the archive script in
+the background, archives the workspace's chats, and removes the folder. The branch is kept, and the
+workspace leaves the sidebar.
 
-Archiving waits for you when:
+Archiving stops and tells you when:
 
 - an agent is still working in the workspace,
 - the folder has uncommitted or untracked files. **Discard and archive** deletes them.
-- the archive script fails. **Archive anyway** continues without it.
-
-Archived workspaces are listed under **Archived** in their repository. **Restore** recreates the
-folder from the branch, runs setup again, and reopens the chats the archive closed. Chats you
-archived yourself stay archived.
+- the archive script fails. **Show output** opens its output, where **Archive anyway** continues
+  without it.
 
 ## Limits
 

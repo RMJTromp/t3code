@@ -185,15 +185,14 @@ export const make = Effect.gen(function* () {
       Effect.ignore,
     );
 
-  const put = (record: StoredWorkspace) =>
-    Effect.gen(function* () {
-      // Saved first, so clients never see a state a restart would lose.
-      yield* store.save(record);
-      records.set(record.workspace.id, record);
-      syncOwnership(record.workspace);
-      yield* PubSub.publish(changes, state());
-      return record.workspace;
-    });
+  const put = Effect.fn("WorkspaceService.put")(function* (record: StoredWorkspace) {
+    // Saved first, so clients never see a state a restart would lose.
+    yield* store.save(record);
+    records.set(record.workspace.id, record);
+    syncOwnership(record.workspace);
+    yield* PubSub.publish(changes, state());
+    return record.workspace;
+  });
 
   const get = (workspaceId: WorkspaceId) =>
     Effect.suspend(() => {
@@ -252,20 +251,21 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => ({ ok: false, stdout: "" })),
     );
 
-  const resolveDefaultBranch = (root: string) =>
-    Effect.gen(function* () {
-      const remoteHead = yield* runGit(root, [
-        "symbolic-ref",
-        "--quiet",
-        "--short",
-        "refs/remotes/origin/HEAD",
-      ]);
-      if (remoteHead.ok && remoteHead.stdout.startsWith("origin/")) {
-        return remoteHead.stdout.slice("origin/".length);
-      }
-      const current = yield* runGit(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
-      return current.ok && current.stdout !== "HEAD" ? current.stdout : "main";
-    });
+  const resolveDefaultBranch = Effect.fn("WorkspaceService.resolveDefaultBranch")(function* (
+    root: string,
+  ) {
+    const remoteHead = yield* runGit(root, [
+      "symbolic-ref",
+      "--quiet",
+      "--short",
+      "refs/remotes/origin/HEAD",
+    ]);
+    if (remoteHead.ok && remoteHead.stdout.startsWith("origin/")) {
+      return remoteHead.stdout.slice("origin/".length);
+    }
+    const current = yield* runGit(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
+    return current.ok && current.stdout !== "HEAD" ? current.stdout : "main";
+  });
 
   const listBranchNames = (root: string) =>
     runGit(root, [
@@ -275,26 +275,25 @@ export const make = Effect.gen(function* () {
       "refs/remotes/origin",
     ]).pipe(Effect.map((result) => new Set(result.ok ? result.stdout.split("\n") : [])));
 
-  const worktreeParent = (root: string) =>
-    Effect.gen(function* () {
-      const settings = yield* settingsService.getSettings.pipe(
-        Effect.mapError(gitFailure("Could not read settings")),
+  const worktreeParent = Effect.fn("WorkspaceService.worktreeParent")(function* (root: string) {
+    const settings = yield* settingsService.getSettings.pipe(
+      Effect.mapError(gitFailure("Could not read settings")),
+    );
+    const parent = resolveWorktreesDirectory(
+      settings.worktreesDirectory,
+      config.worktreesDir,
+      path,
+      home,
+    );
+    if (parent === null) {
+      return yield* workspaceError(
+        "git-failed",
+        "The worktree location must be an absolute folder. Change it in Settings → Storage.",
       );
-      const parent = resolveWorktreesDirectory(
-        settings.worktreesDirectory,
-        config.worktreesDir,
-        path,
-        home,
-      );
-      if (parent === null) {
-        return yield* workspaceError(
-          "git-failed",
-          "The worktree location must be an absolute folder. Change it in Settings → Storage.",
-        );
-      }
-      // Same layout upstream uses, so its managed-worktree checks still apply.
-      return path.join(parent, path.basename(path.resolve(root)));
-    });
+    }
+    // Same layout upstream uses, so its managed-worktree checks still apply.
+    return path.join(parent, path.basename(path.resolve(root)));
+  });
 
   const readProjectFileConfig = (worktreePath: string) =>
     fileSystem.readFileString(path.join(worktreePath, "t3.json")).pipe(
@@ -308,25 +307,27 @@ export const make = Effect.gen(function* () {
    * `runOnWorktreeCreate` script. Archive has no further fallback: settle
    * scripts serve a different event.
    */
-  const resolveScript = (workspace: Workspace, kind: WorkspaceScriptKind) =>
-    Effect.gen(function* () {
-      const configured = projectScripts.get(workspace.projectId);
-      const fromSettings = kind === "setup" ? configured?.setup : configured?.archive;
-      if (fromSettings !== undefined && fromSettings.trim().length > 0) return fromSettings;
-      const fileConfig = yield* readProjectFileConfig(workspace.worktreePath);
-      const fromFile =
-        kind === "setup" ? fileConfig?.workspace?.setup : fileConfig?.workspace?.archive;
-      if (fromFile !== undefined && fromFile.trim().length > 0) return fromFile;
-      if (kind === "archive") return null;
-      const project = yield* loadProject(workspace.projectId);
-      const settings = yield* settingsService.getSettings.pipe(Effect.orElseSucceed(() => null));
-      const fromProject =
-        settings === null ? null : setupProjectScript(resolveProjectScripts(settings, project));
-      if (fromProject !== null) return fromProject.command;
-      return (
-        fileConfig?.scripts?.find((script) => script.runOnWorktreeCreate === true)?.command ?? null
-      );
-    });
+  const resolveScript = Effect.fn("WorkspaceService.resolveScript")(function* (
+    workspace: Workspace,
+    kind: WorkspaceScriptKind,
+  ) {
+    const configured = projectScripts.get(workspace.projectId);
+    const fromSettings = kind === "setup" ? configured?.setup : configured?.archive;
+    if (fromSettings !== undefined && fromSettings.trim().length > 0) return fromSettings;
+    const fileConfig = yield* readProjectFileConfig(workspace.worktreePath);
+    const fromFile =
+      kind === "setup" ? fileConfig?.workspace?.setup : fileConfig?.workspace?.archive;
+    if (fromFile !== undefined && fromFile.trim().length > 0) return fromFile;
+    if (kind === "archive") return null;
+    const project = yield* loadProject(workspace.projectId);
+    const settings = yield* settingsService.getSettings.pipe(Effect.orElseSucceed(() => null));
+    const fromProject =
+      settings === null ? null : setupProjectScript(resolveProjectScripts(settings, project));
+    if (fromProject !== null) return fromProject.command;
+    return (
+      fileConfig?.scripts?.find((script) => script.runOnWorktreeCreate === true)?.command ?? null
+    );
+  });
 
   const scriptEnv = (workspace: Workspace, projectRoot: string) =>
     projectScriptRuntimeEnv({
@@ -341,63 +342,65 @@ export const make = Effect.gen(function* () {
     });
 
   /** Returns true when the script succeeded or there was none. */
-  const runScript = (workspaceId: WorkspaceId, kind: WorkspaceScriptKind) =>
-    Effect.gen(function* () {
-      const { workspace } = yield* get(workspaceId);
-      const command = yield* resolveScript(workspace, kind);
-      if (command === null) return true;
-      const project = yield* loadProject(workspace.projectId);
-      const startedAt = yield* nowIso;
-      resetLog(workspaceId, `$ ${command}\n`);
-      yield* update(workspaceId, (record) => ({
-        ...record,
-        workspace: {
-          ...record.workspace,
-          lastScript: { kind, command, phase: "running", exitCode: null, startedAt, endedAt: null },
+  const runScript = Effect.fn("WorkspaceService.runScript")(function* (
+    workspaceId: WorkspaceId,
+    kind: WorkspaceScriptKind,
+  ) {
+    const { workspace } = yield* get(workspaceId);
+    const command = yield* resolveScript(workspace, kind);
+    if (command === null) return true;
+    const project = yield* loadProject(workspace.projectId);
+    const startedAt = yield* nowIso;
+    resetLog(workspaceId, `$ ${command}\n`);
+    yield* update(workspaceId, (record) => ({
+      ...record,
+      workspace: {
+        ...record.workspace,
+        lastScript: { kind, command, phase: "running", exitCode: null, startedAt, endedAt: null },
+      },
+    }));
+    const terminal =
+      kind === "setup" && workspace.setupTerminal !== null
+        ? workspace.setupTerminal
+        : {
+            threadId: workspaceTerminalThread(workspace.id),
+            terminalId: kind === "setup" ? SETUP_TERMINAL_ID : ARCHIVE_TERMINAL_ID,
+          };
+    const result = yield* runWorkspaceScript({
+      threadId: terminal.threadId,
+      terminalId: terminal.terminalId,
+      command,
+      cwd: workspace.worktreePath,
+      env: scriptEnv(workspace, project.workspaceRoot),
+      onOutput: (text) => appendLog(workspaceId, text),
+    }).pipe(
+      Effect.provideService(TerminalManager.TerminalManager, terminals),
+      Effect.provideService(Crypto.Crypto, crypto),
+    );
+    const succeeded = result.exitCode === 0;
+    appendLog(
+      workspaceId,
+      `\n[${kind} ${succeeded ? "finished" : "failed"}${
+        result.exitCode === null ? "" : ` with exit code ${result.exitCode}`
+      }]\n`,
+    );
+    const endedAt = yield* nowIso;
+    yield* update(workspaceId, (record) => ({
+      ...record,
+      workspace: {
+        ...record.workspace,
+        lastScript: {
+          kind,
+          command,
+          phase: succeeded ? "succeeded" : "failed",
+          exitCode: result.exitCode,
+          startedAt,
+          endedAt,
         },
-      }));
-      const terminal =
-        kind === "setup" && workspace.setupTerminal !== null
-          ? workspace.setupTerminal
-          : {
-              threadId: workspaceTerminalThread(workspace.id),
-              terminalId: kind === "setup" ? SETUP_TERMINAL_ID : ARCHIVE_TERMINAL_ID,
-            };
-      const result = yield* runWorkspaceScript({
-        threadId: terminal.threadId,
-        terminalId: terminal.terminalId,
-        command,
-        cwd: workspace.worktreePath,
-        env: scriptEnv(workspace, project.workspaceRoot),
-        onOutput: (text) => appendLog(workspaceId, text),
-      }).pipe(
-        Effect.provideService(TerminalManager.TerminalManager, terminals),
-        Effect.provideService(Crypto.Crypto, crypto),
-      );
-      const succeeded = result.exitCode === 0;
-      appendLog(
-        workspaceId,
-        `\n[${kind} ${succeeded ? "finished" : "failed"}${
-          result.exitCode === null ? "" : ` with exit code ${result.exitCode}`
-        }]\n`,
-      );
-      const endedAt = yield* nowIso;
-      yield* update(workspaceId, (record) => ({
-        ...record,
-        workspace: {
-          ...record.workspace,
-          lastScript: {
-            kind,
-            command,
-            phase: succeeded ? "succeeded" : "failed",
-            exitCode: result.exitCode,
-            startedAt,
-            endedAt,
-          },
-        },
-      }));
-      return succeeded;
-    });
+      },
+    }));
+    return succeeded;
+  });
 
   const memberThreads = (workspace: Workspace) =>
     threads.listProjectThreads({ projectId: workspace.projectId, includeSubagents: true }).pipe(
@@ -427,68 +430,67 @@ export const make = Effect.gen(function* () {
       Effect.asVoid,
     );
 
-  const provision = (workspaceId: WorkspaceId) =>
-    Effect.gen(function* () {
-      const { workspace } = yield* get(workspaceId);
-      const project = yield* loadProject(workspace.projectId);
-      const root = project.workspaceRoot;
-      if (!(yield* exists(workspace.worktreePath))) {
-        const baseRef = workspace.baseRef ?? (yield* resolveDefaultBranch(root));
-        let startRef = baseRef;
-        const hasOrigin = yield* git
-          .remoteExists({ cwd: root, remoteName: "origin" })
-          .pipe(Effect.orElseSucceed(() => false));
-        if (hasOrigin) {
-          appendLog(workspaceId, `Fetching origin/${baseRef}…\n`);
-          yield* git
-            .fetchRemote({ cwd: root, remoteName: "origin", refName: baseRef })
-            .pipe(
-              Effect.catch((error) =>
-                Effect.sync(() => appendLog(workspaceId, `${describe(error)}\n`)),
-              ),
-            );
-          const remoteBase = yield* git
-            .remoteBranchExists({ cwd: root, remoteName: "origin", refName: baseRef })
-            .pipe(Effect.orElseSucceed(() => false));
-          if (remoteBase) {
-            startRef = yield* git
-              .resolveRemoteTrackingCommit({
-                cwd: root,
-                refName: baseRef,
-                fallbackRemoteName: "origin",
-              })
-              .pipe(
-                Effect.map((resolved) => resolved.commitSha),
-                Effect.orElseSucceed(() => baseRef),
-              );
-          }
-        }
-        const branch = workspace.branch ?? workspace.name;
-        appendLog(workspaceId, `Creating worktree ${workspace.worktreePath} on ${branch}…\n`);
-        const branchExists = (yield* listBranchNames(root)).has(branch);
+  const provision = Effect.fn("WorkspaceService.provision")(function* (workspaceId: WorkspaceId) {
+    const { workspace } = yield* get(workspaceId);
+    const project = yield* loadProject(workspace.projectId);
+    const root = project.workspaceRoot;
+    if (!(yield* exists(workspace.worktreePath))) {
+      const baseRef = workspace.baseRef ?? (yield* resolveDefaultBranch(root));
+      let startRef = baseRef;
+      const hasOrigin = yield* git
+        .remoteExists({ cwd: root, remoteName: "origin" })
+        .pipe(Effect.orElseSucceed(() => false));
+      if (hasOrigin) {
+        appendLog(workspaceId, `Fetching origin/${baseRef}…\n`);
         yield* git
-          .createWorktree({
-            cwd: root,
-            refName: branchExists ? branch : startRef,
-            ...(branchExists ? {} : { newRefName: branch, baseRefName: baseRef }),
-            path: workspace.worktreePath,
-          })
-          .pipe(Effect.mapError(gitFailure("Could not create the worktree")));
-        yield* update(workspaceId, (record) => ({
-          ...record,
-          workspace: { ...record.workspace, baseRef },
-        }));
+          .fetchRemote({ cwd: root, remoteName: "origin", refName: baseRef })
+          .pipe(
+            Effect.catch((error) =>
+              Effect.sync(() => appendLog(workspaceId, `${describe(error)}\n`)),
+            ),
+          );
+        const remoteBase = yield* git
+          .remoteBranchExists({ cwd: root, remoteName: "origin", refName: baseRef })
+          .pipe(Effect.orElseSucceed(() => false));
+        if (remoteBase) {
+          startRef = yield* git
+            .resolveRemoteTrackingCommit({
+              cwd: root,
+              refName: baseRef,
+              fallbackRemoteName: "origin",
+            })
+            .pipe(
+              Effect.map((resolved) => resolved.commitSha),
+              Effect.orElseSucceed(() => baseRef),
+            );
+        }
       }
-      yield* recordRealPath(workspace);
-      yield* setStatus(workspaceId, "ready", { pendingOperation: null, error: null });
-      const setupOk = yield* runScript(workspaceId, "setup");
-      if (!setupOk) {
-        yield* update(workspaceId, (record) => ({
-          ...record,
-          workspace: { ...record.workspace, error: "The setup script failed. Chats still work." },
-        }));
-      }
-    });
+      const branch = workspace.branch ?? workspace.name;
+      appendLog(workspaceId, `Creating worktree ${workspace.worktreePath} on ${branch}…\n`);
+      const branchExists = (yield* listBranchNames(root)).has(branch);
+      yield* git
+        .createWorktree({
+          cwd: root,
+          refName: branchExists ? branch : startRef,
+          ...(branchExists ? {} : { newRefName: branch, baseRefName: baseRef }),
+          path: workspace.worktreePath,
+        })
+        .pipe(Effect.mapError(gitFailure("Could not create the worktree")));
+      yield* update(workspaceId, (record) => ({
+        ...record,
+        workspace: { ...record.workspace, baseRef },
+      }));
+    }
+    yield* recordRealPath(workspace);
+    yield* setStatus(workspaceId, "ready", { pendingOperation: null, error: null });
+    const setupOk = yield* runScript(workspaceId, "setup");
+    if (!setupOk) {
+      yield* update(workspaceId, (record) => ({
+        ...record,
+        workspace: { ...record.workspace, error: "The setup script failed. Chats still work." },
+      }));
+    }
+  });
 
   const create: WorkspaceService["Service"]["create"] = ({ projectId, setupThreadId }) =>
     createLock.withPermits(1)(
@@ -546,91 +548,92 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  const waitForThreadCleanup = (threadIds: ReadonlyArray<ThreadId>) =>
-    Effect.gen(function* () {
-      if (threadIds.length === 0) return;
-      const pending = sql<{ thread_id: string }>`
+  const waitForThreadCleanup = Effect.fn("WorkspaceService.waitForThreadCleanup")(function* (
+    threadIds: ReadonlyArray<ThreadId>,
+  ) {
+    if (threadIds.length === 0) return;
+    const pending = sql<{ thread_id: string }>`
         SELECT thread_id FROM orchestration_v2_effect_outbox
         WHERE thread_id IN ${sql.in(threadIds)} AND status IN ('pending', 'running')
         LIMIT 1
       `.pipe(Effect.map((rows) => rows.length > 0));
-      // The archive dispatch only queues session detach and terminal cleanup;
-      // the folder must outlive them.
-      yield* pending.pipe(
-        Effect.repeat({ while: (busy) => busy, schedule: Schedule.spaced("250 millis") }),
-        Effect.timeoutOrElse({
-          duration: OUTBOX_DRAIN_TIMEOUT,
-          orElse: () =>
-            Effect.fail(
-              workspaceError("invalid-state", "The workspace's chats are still shutting down."),
-            ),
-        }),
-        Effect.mapError((cause) =>
-          isWorkspaceError(cause) ? cause : workspaceError("persistence-failed", describe(cause)),
-        ),
-      );
-    });
+    // The archive dispatch only queues session detach and terminal cleanup;
+    // the folder must outlive them.
+    yield* pending.pipe(
+      Effect.repeat({ while: (busy) => busy, schedule: Schedule.spaced("250 millis") }),
+      Effect.timeoutOrElse({
+        duration: OUTBOX_DRAIN_TIMEOUT,
+        orElse: () =>
+          Effect.fail(
+            workspaceError("invalid-state", "The workspace's chats are still shutting down."),
+          ),
+      }),
+      Effect.mapError((cause) =>
+        isWorkspaceError(cause) ? cause : workspaceError("persistence-failed", describe(cause)),
+      ),
+    );
+  });
 
-  const teardown = (workspaceId: WorkspaceId, ignoreScriptFailure: boolean) =>
-    Effect.gen(function* () {
-      const scriptOk = yield* runScript(workspaceId, "archive");
-      if (!scriptOk && !ignoreScriptFailure) {
-        yield* setStatus(workspaceId, "ready", {
-          pendingOperation: null,
-          error: "The archive script failed. Fix it, or archive anyway.",
-        });
-        return;
-      }
-      const { workspace } = yield* get(workspaceId);
-      const members = (yield* memberThreads(workspace)).filter(
-        (thread) => thread.archivedAt === undefined || thread.archivedAt === null,
-      );
-      const archivedIds: Array<ThreadId> = [];
-      for (const thread of members) {
-        yield* threads
-          .dispatch({
-            type: "thread.archive",
-            commandId: CommandId.make(`fork-workspace-archive:${yield* newId}`),
-            threadId: thread.id,
-          })
-          .pipe(
-            Effect.mapError(() =>
-              workspaceError("invalid-state", `Could not archive "${thread.title}".`),
-            ),
-          );
-        archivedIds.push(thread.id);
-        yield* terminals.close({ threadId: thread.id }).pipe(Effect.ignore);
-      }
-      yield* update(workspaceId, (record) => ({
-        ...record,
-        archivedThreadIds: [...new Set([...record.archivedThreadIds, ...archivedIds])],
-      }));
-      yield* waitForThreadCleanup(archivedIds);
-      if ((yield* memberThreads(workspace)).some(isBusy)) {
-        return yield* workspaceError("agents-running", "An agent started while archiving.");
-      }
-      const project = yield* loadProject(workspace.projectId);
-      if (yield* exists(workspace.worktreePath)) {
-        appendLog(workspaceId, `Removing ${workspace.worktreePath}…\n`);
-        yield* withWorkspaceLease(
-          workspace.worktreePath,
-          git.removeWorktree({
-            cwd: project.workspaceRoot,
-            path: workspace.worktreePath,
-            force: true,
-          }),
-        ).pipe(Effect.mapError(gitFailure("Could not remove the worktree")));
-      }
-      yield* terminals
-        .close({ threadId: workspaceTerminalThread(workspaceId) })
-        .pipe(Effect.ignore);
-      appendLog(workspaceId, "Archived. The branch was kept.\n");
-      yield* setStatus(workspaceId, "archived", {
+  const teardown = Effect.fn("WorkspaceService.teardown")(function* (
+    workspaceId: WorkspaceId,
+    ignoreScriptFailure: boolean,
+  ) {
+    const scriptOk = yield* runScript(workspaceId, "archive");
+    if (!scriptOk && !ignoreScriptFailure) {
+      yield* setStatus(workspaceId, "ready", {
         pendingOperation: null,
-        error: null,
-        archivedAt: yield* nowIso,
+        error: "The archive script failed. Fix it, or archive anyway.",
       });
+      return;
+    }
+    const { workspace } = yield* get(workspaceId);
+    const members = (yield* memberThreads(workspace)).filter(
+      (thread) => thread.archivedAt === undefined || thread.archivedAt === null,
+    );
+    const archivedIds: Array<ThreadId> = [];
+    for (const thread of members) {
+      yield* threads
+        .dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make(`fork-workspace-archive:${yield* newId}`),
+          threadId: thread.id,
+        })
+        .pipe(
+          Effect.mapError(() =>
+            workspaceError("invalid-state", `Could not archive "${thread.title}".`),
+          ),
+        );
+      archivedIds.push(thread.id);
+      yield* terminals.close({ threadId: thread.id }).pipe(Effect.ignore);
+    }
+    yield* update(workspaceId, (record) => ({
+      ...record,
+      archivedThreadIds: [...new Set([...record.archivedThreadIds, ...archivedIds])],
+    }));
+    yield* waitForThreadCleanup(archivedIds);
+    if ((yield* memberThreads(workspace)).some(isBusy)) {
+      return yield* workspaceError("agents-running", "An agent started while archiving.");
+    }
+    const project = yield* loadProject(workspace.projectId);
+    if (yield* exists(workspace.worktreePath)) {
+      appendLog(workspaceId, `Removing ${workspace.worktreePath}…\n`);
+      yield* withWorkspaceLease(
+        workspace.worktreePath,
+        git.removeWorktree({
+          cwd: project.workspaceRoot,
+          path: workspace.worktreePath,
+          force: true,
+        }),
+      ).pipe(Effect.mapError(gitFailure("Could not remove the worktree")));
+    }
+    yield* terminals.close({ threadId: workspaceTerminalThread(workspaceId) }).pipe(Effect.ignore);
+    appendLog(workspaceId, "Archived. The branch was kept.\n");
+    yield* setStatus(workspaceId, "archived", {
+      pendingOperation: null,
+      error: null,
+      archivedAt: yield* nowIso,
     });
+  });
 
   const archive: WorkspaceService["Service"]["archive"] = (input) =>
     locked(
@@ -694,57 +697,56 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const restore = (workspaceId: WorkspaceId) =>
-    Effect.gen(function* () {
-      const { workspace, archivedThreadIds } = yield* get(workspaceId);
-      const project = yield* loadProject(workspace.projectId);
-      // Upstream may have recreated the folder when a chat was resumed directly.
-      if (!(yield* exists(workspace.worktreePath))) {
-        const ref = workspace.branch ?? workspace.name;
-        appendLog(workspaceId, `Restoring ${workspace.worktreePath} from ${ref}…\n`);
-        yield* git
-          .createWorktree({
-            cwd: project.workspaceRoot,
-            refName: ref,
-            path: workspace.worktreePath,
-          })
-          .pipe(Effect.mapError(gitFailure("Could not restore the worktree")));
-      }
-      const stillArchived: Array<ThreadId> = [];
-      for (const threadId of archivedThreadIds) {
-        const commandId = CommandId.make(`fork-workspace-unarchive:${yield* newId}`);
-        yield* threads
-          .dispatch({ type: "thread.unarchive", commandId, threadId })
-          .pipe(Effect.catch(() => Effect.sync(() => stillArchived.push(threadId))));
-      }
-      yield* recordRealPath(workspace);
-      // Unreopened chats stay listed so Restore on a later retry still finds them.
+  const restore = Effect.fn("WorkspaceService.restore")(function* (workspaceId: WorkspaceId) {
+    const { workspace, archivedThreadIds } = yield* get(workspaceId);
+    const project = yield* loadProject(workspace.projectId);
+    // Upstream may have recreated the folder when a chat was resumed directly.
+    if (!(yield* exists(workspace.worktreePath))) {
+      const ref = workspace.branch ?? workspace.name;
+      appendLog(workspaceId, `Restoring ${workspace.worktreePath} from ${ref}…\n`);
+      yield* git
+        .createWorktree({
+          cwd: project.workspaceRoot,
+          refName: ref,
+          path: workspace.worktreePath,
+        })
+        .pipe(Effect.mapError(gitFailure("Could not restore the worktree")));
+    }
+    const stillArchived: Array<ThreadId> = [];
+    for (const threadId of archivedThreadIds) {
+      const commandId = CommandId.make(`fork-workspace-unarchive:${yield* newId}`);
+      yield* threads
+        .dispatch({ type: "thread.unarchive", commandId, threadId })
+        .pipe(Effect.catch(() => Effect.sync(() => stillArchived.push(threadId))));
+    }
+    yield* recordRealPath(workspace);
+    // Unreopened chats stay listed so Restore on a later retry still finds them.
+    yield* update(workspaceId, (record) => ({
+      ...record,
+      archivedThreadIds: stillArchived,
+      workspace: {
+        ...record.workspace,
+        setupTerminal:
+          archivedThreadIds[0] === undefined
+            ? record.workspace.setupTerminal
+            : { threadId: archivedThreadIds[0], terminalId: SETUP_TERMINAL_ID },
+        status: "ready",
+        pendingOperation: null,
+        error:
+          stillArchived.length === 0
+            ? null
+            : `${stillArchived.length} chat${stillArchived.length === 1 ? "" : "s"} could not be reopened.`,
+        archivedAt: null,
+      },
+    }));
+    const setupOk = yield* runScript(workspaceId, "setup");
+    if (!setupOk) {
       yield* update(workspaceId, (record) => ({
         ...record,
-        archivedThreadIds: stillArchived,
-        workspace: {
-          ...record.workspace,
-          setupTerminal:
-            archivedThreadIds[0] === undefined
-              ? record.workspace.setupTerminal
-              : { threadId: archivedThreadIds[0], terminalId: SETUP_TERMINAL_ID },
-          status: "ready",
-          pendingOperation: null,
-          error:
-            stillArchived.length === 0
-              ? null
-              : `${stillArchived.length} chat${stillArchived.length === 1 ? "" : "s"} could not be reopened.`,
-          archivedAt: null,
-        },
+        workspace: { ...record.workspace, error: "The setup script failed. Chats still work." },
       }));
-      const setupOk = yield* runScript(workspaceId, "setup");
-      if (!setupOk) {
-        yield* update(workspaceId, (record) => ({
-          ...record,
-          workspace: { ...record.workspace, error: "The setup script failed. Chats still work." },
-        }));
-      }
-    });
+    }
+  });
 
   const unarchive: WorkspaceService["Service"]["unarchive"] = (workspaceId) =>
     locked(
@@ -761,8 +763,8 @@ export const make = Effect.gen(function* () {
       }),
     ).pipe(Effect.tap(() => fork(workspaceId, "Restoring the workspace", restore(workspaceId))));
 
-  const retry: WorkspaceService["Service"]["retry"] = (workspaceId) =>
-    Effect.gen(function* () {
+  const retry: WorkspaceService["Service"]["retry"] = Effect.fn("WorkspaceService.retry")(
+    function* (workspaceId: WorkspaceId) {
       const { workspace } = yield* get(workspaceId);
       switch (workspace.pendingOperation) {
         case "create": {
@@ -780,7 +782,8 @@ export const make = Effect.gen(function* () {
         case null:
           return yield* workspaceError("invalid-state", "Nothing to retry.");
       }
-    });
+    },
+  );
 
   const stream: WorkspaceService["Service"]["stream"] = Stream.callback<WorkspaceStateEvent>(
     (mailbox) =>
@@ -797,13 +800,14 @@ export const make = Effect.gen(function* () {
     { bufferSize: 1, strategy: "sliding" },
   );
 
-  const setProjectScripts: WorkspaceService["Service"]["setProjectScripts"] = (scripts) =>
-    Effect.gen(function* () {
-      yield* store.saveProjectScripts(scripts);
-      projectScripts.set(scripts.projectId, scripts);
-      yield* PubSub.publish(changes, state());
-      return scripts;
-    });
+  const setProjectScripts: WorkspaceService["Service"]["setProjectScripts"] = Effect.fn(
+    "WorkspaceService.setProjectScripts",
+  )(function* (scripts: ProjectWorkspaceScripts) {
+    yield* store.saveProjectScripts(scripts);
+    projectScripts.set(scripts.projectId, scripts);
+    yield* PubSub.publish(changes, state());
+    return scripts;
+  });
 
   const setRunning = (
     workspaceId: WorkspaceId,
@@ -816,48 +820,49 @@ export const make = Effect.gen(function* () {
       workspace: { ...record.workspace, runningScripts: change(record.workspace.runningScripts) },
     })).pipe(Effect.ignore);
 
-  const runProjectScript: WorkspaceService["Service"]["runProjectScript"] = (input) =>
-    Effect.gen(function* () {
-      const { workspace } = yield* get(input.workspaceId);
-      if (workspace.status !== "ready" && workspace.status !== "failed") {
-        return yield* workspaceError("invalid-state", "Scripts run once the workspace is ready.");
-      }
-      const script = projectScripts
-        .get(workspace.projectId)
-        ?.scripts.find((entry) => entry.id === input.scriptId);
-      if (script === undefined || script.command.trim().length === 0) {
-        return yield* workspaceError("not-found", "This script no longer exists.");
-      }
-      // Its terminal is still busy; the client just shows it again.
-      if (workspace.runningScripts.some((entry) => entry.scriptId === script.id)) return workspace;
-      const project = yield* loadProject(workspace.projectId);
-      const running: WorkspaceRunningScript = {
-        scriptId: script.id,
-        name: script.name.trim() || "script",
-        threadId: input.threadId,
-        terminalId: `script-${script.id}`,
-      };
-      yield* runWorkspaceScript({
-        threadId: running.threadId,
-        terminalId: running.terminalId,
-        command: script.command,
-        cwd: workspace.worktreePath,
-        env: scriptEnv(workspace, project.workspaceRoot),
-        onOutput: (text) => appendLog(workspace.id, text),
-        onOpened: setRunning(workspace.id, (current) => [...current, running]),
-      }).pipe(
-        Effect.provideService(TerminalManager.TerminalManager, terminals),
-        Effect.provideService(Crypto.Crypto, crypto),
-        // Ctrl+C or closing the terminal also ends the run.
-        Effect.ensuring(
-          setRunning(workspace.id, (current) =>
-            current.filter((entry) => entry.scriptId !== running.scriptId),
-          ),
+  const runProjectScript: WorkspaceService["Service"]["runProjectScript"] = Effect.fn(
+    "WorkspaceService.runProjectScript",
+  )(function* (input: WorkspaceRunScriptInput) {
+    const { workspace } = yield* get(input.workspaceId);
+    if (workspace.status !== "ready" && workspace.status !== "failed") {
+      return yield* workspaceError("invalid-state", "Scripts run once the workspace is ready.");
+    }
+    const script = projectScripts
+      .get(workspace.projectId)
+      ?.scripts.find((entry) => entry.id === input.scriptId);
+    if (script === undefined || script.command.trim().length === 0) {
+      return yield* workspaceError("not-found", "This script no longer exists.");
+    }
+    // Its terminal is still busy; the client just shows it again.
+    if (workspace.runningScripts.some((entry) => entry.scriptId === script.id)) return workspace;
+    const project = yield* loadProject(workspace.projectId);
+    const running: WorkspaceRunningScript = {
+      scriptId: script.id,
+      name: script.name.trim() || "script",
+      threadId: input.threadId,
+      terminalId: `script-${script.id}`,
+    };
+    yield* runWorkspaceScript({
+      threadId: running.threadId,
+      terminalId: running.terminalId,
+      command: script.command,
+      cwd: workspace.worktreePath,
+      env: scriptEnv(workspace, project.workspaceRoot),
+      onOutput: (text) => appendLog(workspace.id, text),
+      onOpened: setRunning(workspace.id, (current) => [...current, running]),
+    }).pipe(
+      Effect.provideService(TerminalManager.TerminalManager, terminals),
+      Effect.provideService(Crypto.Crypto, crypto),
+      // Ctrl+C or closing the terminal also ends the run.
+      Effect.ensuring(
+        setRunning(workspace.id, (current) =>
+          current.filter((entry) => entry.scriptId !== running.scriptId),
         ),
-        Effect.forkIn(backgroundScope),
-      );
-      return workspace;
-    });
+      ),
+      Effect.forkIn(backgroundScope),
+    );
+    return workspace;
+  });
 
   const logStream: WorkspaceService["Service"]["logStream"] = (workspaceId) =>
     Stream.callback<WorkspaceLogEvent>((mailbox) =>

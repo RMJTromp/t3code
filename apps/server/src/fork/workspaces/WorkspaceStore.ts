@@ -135,8 +135,8 @@ export const make = Effect.gen(function* () {
     );
   }).pipe(Effect.mapError(persistenceError("Could not read workspaces")));
 
-  const save = (record: StoredWorkspace) =>
-    Effect.gen(function* () {
+  const save = Effect.fn("WorkspaceStore.save")(
+    function* (record: StoredWorkspace) {
       const payload = yield* encodeWorkspace(record.workspace);
       const threadIds = yield* encodeThreadIds(record.archivedThreadIds);
       const updatedAt = yield* nowIso;
@@ -158,7 +158,9 @@ export const make = Effect.gen(function* () {
           log = excluded.log,
           updated_at = excluded.updated_at
       `;
-    }).pipe(Effect.mapError(persistenceError("Could not save the workspace")));
+    },
+    Effect.mapError(persistenceError("Could not save the workspace")),
+  );
 
   const listProjectScripts = sql<{ payload_json: string }>`
     SELECT payload_json FROM fork_project_scripts ORDER BY project_id
@@ -167,8 +169,8 @@ export const make = Effect.gen(function* () {
     Effect.mapError(persistenceError("Could not read project scripts")),
   );
 
-  const saveProjectScripts = (scripts: ProjectWorkspaceScripts) =>
-    Effect.gen(function* () {
+  const saveProjectScripts = Effect.fn("WorkspaceStore.saveProjectScripts")(
+    function* (scripts: ProjectWorkspaceScripts) {
       const payload = yield* encodeProjectScripts(scripts);
       const updatedAt = yield* nowIso;
       yield* sql`
@@ -178,7 +180,9 @@ export const make = Effect.gen(function* () {
           payload_json = excluded.payload_json,
           updated_at = excluded.updated_at
       `;
-    }).pipe(Effect.mapError(persistenceError("Could not save project scripts")));
+    },
+    Effect.mapError(persistenceError("Could not save project scripts")),
+  );
 
   return WorkspaceStore.of({ list, save, listProjectScripts, saveProjectScripts });
 });

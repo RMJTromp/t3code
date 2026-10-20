@@ -62,6 +62,17 @@ export const make = Effect.gen(function* () {
       platform === "linux" ? resolveEarlyLinuxElectronOptionsFromProcess(homeDirectory) : null;
 
     if (linux !== null) {
+      DesktopEarlyElectronStartup.restoreEarlyLinuxDeviceScaleFactor({
+        env: process.env,
+        homeDirectory,
+        joinPath: NodePath.posix.join,
+        commandLine: Electron.app.commandLine,
+        readFileString: (path) => NodeFS.readFileSync(path, "utf8"),
+        writeFileString: (path, value) => {
+          NodeFS.mkdirSync(NodePath.posix.dirname(path), { recursive: true });
+          NodeFS.writeFileSync(path, value, "utf8");
+        },
+      });
       // The portal also requires a valid desktop entry. An AppImage update may
       // have removed the executable referenced by the previous launch's entry.
       try {
@@ -81,14 +92,21 @@ export const make = Effect.gen(function* () {
           : undefined;
         if (iconPath !== undefined) {
           try {
-            NodeFS.mkdirSync(NodePath.posix.dirname(iconPath), { recursive: true });
-            NodeFS.copyFileSync(
+            // Electron's copyFile extracts ASAR entries to temporary files it never removes.
+            const icon = NodeFS.readFileSync(
               NodePath.posix.join(
                 Electron.app.getAppPath(),
                 "apps/desktop/prod-resources/icon.png",
               ),
-              iconPath,
             );
+            let current: Buffer | null = null;
+            try {
+              current = NodeFS.readFileSync(iconPath);
+            } catch {}
+            if (current === null || !current.equals(icon)) {
+              NodeFS.mkdirSync(NodePath.posix.dirname(iconPath), { recursive: true });
+              NodeFS.writeFileSync(iconPath, icon, { mode: 0o600 });
+            }
           } catch {}
         }
         NodeFS.writeFileSync(

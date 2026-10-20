@@ -50,7 +50,7 @@ lists archived workspaces, so no client reaches it.
 | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | `packages/contracts/src/{index,rpc,clientRpcPermissions}.ts`                      | Export and register the workspace RPCs and client scopes.                         |
 | `packages/client-runtime/src/rpc/client.ts`                                       | Let clients subscribe to the two workspace streams.                               |
-| `apps/server/src/server.ts`, `ws.ts`                                              | Provide the workspace layer and its RPC handlers.                                 |
+| `apps/server/src/server.ts`, `ws.ts`, `ws.test.ts`                                | Provide the workspace layer and its RPC handlers.                                 |
 | `apps/server/src/auth/RpcAuthorization.ts`, `observability/RpcInstrumentation.ts` | Scopes and metrics tags for the new RPCs.                                         |
 | `apps/server/src/project/ProjectSetupScriptRunner.ts`                             | A workspace runs its setup once; new chats in it skip the project's setup action. |
 | `apps/server/src/git/GitWorkflowService.ts`                                       | Refuse to remove a live workspace's worktree from anywhere but its own archive.   |

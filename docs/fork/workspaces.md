@@ -10,6 +10,9 @@ Click **+** next to a repository in the sidebar to open the new-workspace compos
 - **What do you want to work on?** becomes the workspace's first message. Leave it empty to
   open an empty chat instead. The footer picks that chat's model, reasoning, and access, like the
   chat composer.
+- The message box works like the chat composer: Markdown formats as you type, `@` mentions files
+  from the repository, and `$` or `/` insert the chosen agent's skills and commands. Files are
+  found in the repository's main folder, since the workspace's folder doesn't exist yet.
 - The repository menu at the top left switches repositories.
 - The branch next to it is the **target branch**, which the new branch starts from. It defaults
   to the repository's default branch. **Start from remote** in its menu uses origin's latest copy.

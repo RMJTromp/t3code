@@ -13,6 +13,7 @@ import { ChevronDownIcon, FolderPlusIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { openCommandPalette } from "../../commandPaletteBus";
+import type { ComposerPromptEditorHandle } from "../../components/ComposerPromptEditor";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { ProviderModelPicker } from "../../components/chat/ProviderModelPicker";
 import { runtimeModeConfig, runtimeModeOptions } from "../../components/chat/runtimeModeConfig";
@@ -28,7 +29,6 @@ import {
   SelectValue,
 } from "../../components/ui/select";
 import { Spinner } from "../../components/ui/spinner";
-import { Textarea } from "../../components/ui/textarea";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
@@ -48,6 +48,7 @@ import { usePaginatedBranches } from "../../state/queries";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { type CheckoutChoice, CheckoutPicker } from "./CheckoutPicker";
 import { useReadIssue } from "./github";
+import { NewWorkspacePromptEditor } from "./NewWorkspacePromptEditor";
 import { formatIssueForPrompt } from "./logic";
 import { TargetBranchPicker } from "./TargetBranchPicker";
 import { closeWorkspaceDialog } from "./dialogStore";
@@ -177,7 +178,7 @@ function ProjectComposer({
   const [issueBlock, setIssueBlock] = useState<string | null>(null);
   const [loadingIssue, setLoadingIssue] = useState(false);
   const latestIssueRequest = useRef(0);
-  const promptRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<ComposerPromptEditorHandle>(null);
   const readIssue = useReadIssue();
 
   const changeIssue = async (next: WorkspaceIssue | null) => {
@@ -205,15 +206,14 @@ function ProjectComposer({
       return base.length > 0 ? `${base}\n\n${block}` : block;
     });
     setIssueBlock(block);
+    // The caret goes after the block's trailing blank line, never inside the
+    // issue; two frames, so the editor has taken the new value first.
+    requestAnimationFrame(() => requestAnimationFrame(() => editorRef.current?.focusAtEnd()));
   };
-  // Once the block is in, the caret goes after its trailing blank line, never inside the issue.
   useEffect(() => {
-    if (issueBlock === null) return;
-    const textarea = promptRef.current?.querySelector("textarea");
-    if (!textarea) return;
-    textarea.focus();
-    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-  }, [issueBlock]);
+    const frame = requestAnimationFrame(() => editorRef.current?.focusAtEnd());
+    return () => cancelAnimationFrame(frame);
+  }, []);
 
   // Shares the target picker's first page, so finding the default costs no extra request.
   const branches = usePaginatedBranches({ environmentId, cwd: project.workspaceRoot, query: "" });
@@ -315,20 +315,20 @@ function ProjectComposer({
           />
         </div>
       </div>
-      <div ref={promptRef} className="px-1 pt-2">
-        <Textarea
-          unstyled
-          autoFocus
-          aria-label="What do you want to work on?"
-          placeholder="What do you want to work on?"
+      <div className="relative px-4 pt-3 pb-1">
+        <NewWorkspacePromptEditor
+          editorRef={editorRef}
+          environmentId={environmentId}
+          cwd={project.workspaceRoot}
+          provider={activeEntry?.snapshot ?? null}
+          providerKind={activeEntry?.driverKind ?? null}
+          richTextEnabled={settings.composerRichTextEnabled}
+          showSkillsInSlashMenu={settings.showSkillsInSlashMenu}
+          sendShortcut={settings.sendShortcut}
           value={prompt}
           disabled={creating}
-          onChange={(event) => setPrompt(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
-            event.preventDefault();
-            void submit();
-          }}
+          onChange={setPrompt}
+          onSubmit={() => void submit()}
         />
       </div>
       <div className="flex min-w-0 items-center gap-1 px-2 pb-2">

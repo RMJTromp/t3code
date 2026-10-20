@@ -1,22 +1,8 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type { ContextMenuItem, EnvironmentId, ThreadId, Workspace } from "@t3tools/contracts";
-import {
-  ArchiveRestoreIcon,
-  HistoryIcon,
-  MessageSquareIcon,
-  PlusIcon,
-  SquarePenIcon,
-} from "lucide-react";
-import {
-  type KeyboardEvent,
-  type MouseEvent,
-  type ReactNode,
-  memo,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { ArchiveRestoreIcon, HistoryIcon, MessageSquareIcon, PlusIcon } from "lucide-react";
+import { type KeyboardEvent, type MouseEvent, memo, useEffect, useRef, useState } from "react";
 
 import { resolveRenameCommit } from "../../components/chat/ChatHeader";
 import { Button } from "../../components/ui/button";
@@ -293,14 +279,8 @@ function WorkspaceTabStrip({
               <ChatTab
                 key={thread.id}
                 title={thread.title}
-                icon={
-                  attention.working ? (
-                    <BrailleSpinner className="text-2xs" />
-                  ) : (
-                    <MessageSquareIcon className="size-3" />
-                  )
-                }
-                unread={attention.unread}
+                working={attention.working}
+                marker={attention.unread ? "unread" : null}
                 active={thread.id === activeTabId}
                 renaming={renamingId === thread.id}
                 onSelect={() => void openThread(environmentId, thread.id)}
@@ -315,32 +295,26 @@ function WorkspaceTabStrip({
               key={draft.draftId}
               title={DRAFT_TITLE}
               closeLabel="Discard draft"
-              icon={
-                draft.hasContent ? (
-                  <SquarePenIcon className="size-3 text-warning-foreground" />
-                ) : (
-                  <MessageSquareIcon className="size-3" />
-                )
-              }
-              unread={false}
+              working={false}
+              marker={draft.hasContent ? "draft" : null}
               active={draft.draftId === activeDraftId}
               renaming={false}
               onSelect={() => void openDraft(draft.draftId)}
               onClose={() => closeDraft(draft.draftId)}
             />
           ))}
+          {/* Always a fresh draft: unsent ones keep their own tabs. */}
+          <button
+            type="button"
+            aria-label="New chat"
+            disabled={!workspaceAcceptsChats(workspace)}
+            onClick={() => void newChat(environmentId, workspace)}
+            className="cursor-pointer flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent/60 hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default disabled:opacity-50"
+          >
+            <PlusIcon className="size-3.5" />
+          </button>
         </div>
       </ScrollArea>
-      {/* Always a fresh draft: unsent ones keep their own tabs. */}
-      <Button
-        size="icon-xs"
-        variant="ghost-muted"
-        aria-label="New chat"
-        disabled={!workspaceAcceptsChats(workspace)}
-        onClick={() => void newChat(environmentId, workspace)}
-      >
-        <PlusIcon className="size-3.5" />
-      </Button>
       <ClosedChatsMenu
         environmentId={environmentId}
         workspace={workspace}
@@ -354,8 +328,9 @@ function WorkspaceTabStrip({
 function ChatTab(props: {
   title: string;
   closeLabel?: string;
-  icon: ReactNode;
-  unread: boolean;
+  working: boolean;
+  /** A dot after the title: a finished turn to read, or text waiting to be sent. */
+  marker: "unread" | "draft" | null;
   active: boolean;
   renaming: boolean;
   onSelect: () => void;
@@ -363,7 +338,7 @@ function ChatTab(props: {
   onContextMenu?: (event: MouseEvent) => void;
   onFinishRename?: (title: string) => void;
 }) {
-  const unread = props.unread;
+  const unread = props.marker === "unread";
   return (
     <div
       data-active-tab={props.active}
@@ -382,7 +357,11 @@ function ChatTab(props: {
         label={props.closeLabel ?? `Close ${props.title}`}
         onClick={props.onClose}
       >
-        {props.icon}
+        {props.working ? (
+          <BrailleSpinner className="text-2xs" />
+        ) : (
+          <MessageSquareIcon className="size-3" />
+        )}
       </PanelTabCloseButton>
       {props.renaming ? (
         <input
@@ -413,8 +392,11 @@ function ChatTab(props: {
           onClick={props.onSelect}
         >
           <span className="truncate">{props.title}</span>
-          {unread && !props.active ? (
-            <span aria-label="Unread" className="size-1.5 shrink-0 rounded-full bg-primary" />
+          {props.marker !== null && !props.active ? (
+            <span
+              aria-label={unread ? "Unread" : "Unsent draft"}
+              className={cn("size-1.5 shrink-0 rounded-full", unread ? "bg-primary" : "bg-warning")}
+            />
           ) : null}
         </button>
       )}

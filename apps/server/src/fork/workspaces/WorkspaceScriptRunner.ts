@@ -3,6 +3,8 @@ import { projectScriptTerminalInput } from "@t3tools/shared/projectScripts";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
 import * as TerminalManager from "../../terminal/Manager.ts";
 
@@ -42,28 +44,43 @@ function completionShell(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): Com
   return "posix";
 }
 
+function quoteForShell(value: string, shell: CompletionShell): string {
+  switch (shell) {
+    case "powershell":
+      return `'${value.replaceAll("'", "''")}'`;
+    case "fish":
+      return `'${value.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`;
+    case "posix":
+      return `'${value.replaceAll("'", "'\\''")}'`;
+  }
+}
+
 /**
- * Same wrapping as upstream's setup runner: the shell reads the whole block
- * before running it, so the script cannot swallow the sentinel, and the
- * sentinel carries the exit code. Unlike upstream, the user sees only their
- * script: the screen (shell startup noise and the echoed wrapper) is cleared
- * first, and the sentinel line is erased right after it is printed.
+ * The script runs from a file rather than being typed into the interactive
+ * shell: a line editor mangles long pastes (history expansion, comments that
+ * zsh does not treat as comments, tabs that trigger completion), and a
+ * `#!/usr/bin/env bash` line only takes effect when the kernel executes a file.
+ * Scripts without a shebang run with the user's shell. The screen is cleared
+ * first so only the script's output shows, and the sentinel, which carries the
+ * exit code, is erased right after it is printed.
  */
 export function wrapWorkspaceCommand(
-  command: string,
+  scriptPath: string,
+  hasShebang: boolean,
   shell: CompletionShell,
   sentinel: string,
 ): string {
-  const body = command.replace(/\r?\n/g, "\r");
+  const script = quoteForShell(scriptPath, shell);
   const clearScreen = "printf '\\033[3J\\033[H\\033[2J'";
   const hideSentinel = "\\r\\033[2K\\033[1A";
   switch (shell) {
     case "powershell":
-      return `Clear-Host; $global:LASTEXITCODE = $null; & {\r${body}\r}; if ($null -ne $LASTEXITCODE) { $__t3c = $LASTEXITCODE } elseif ($?) { $__t3c = 0 } else { $__t3c = 1 }; Write-Host "${sentinel}$__t3c"`;
+      // A script block, not `& file.ps1`, so the execution policy does not block it.
+      return `Clear-Host; $global:LASTEXITCODE = $null; & ([scriptblock]::Create([IO.File]::ReadAllText(${script}))); if ($null -ne $LASTEXITCODE) { $__t3c = $LASTEXITCODE } elseif ($?) { $__t3c = 0 } else { $__t3c = 1 }; Write-Host "${sentinel}$__t3c"`;
     case "fish":
-      return `${clearScreen}; begin\r${body}\rend; printf '\\n${sentinel}%s${hideSentinel}' $status`;
+      return `${clearScreen}; ${hasShebang ? script : `"$SHELL" ${script}`}; printf '\\n${sentinel}%s${hideSentinel}' $status`;
     case "posix":
-      return `${clearScreen}; ( ${body}\r); printf '\\n${sentinel}%s${hideSentinel}' "$?"`;
+      return `${clearScreen}; ${hasShebang ? script : `"\${SHELL:-/bin/sh}" ${script}`}; printf '\\n${sentinel}%s${hideSentinel}' "$?"`;
   }
 }
 
@@ -88,12 +105,38 @@ export const runWorkspaceScript = Effect.fn("ForkWorkspaces.runWorkspaceScript")
   request: WorkspaceScriptRequest,
 ) {
   const terminals = yield* TerminalManager.TerminalManager;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
   const shell = completionShell(yield* HostProcess.Platform, yield* HostProcess.Environment);
   const token = (yield* crypto.randomUUIDv4().pipe(Effect.orDie)).replaceAll("-", "");
   const sentinel = `__T3FORK_DONE_${token}:`;
   const sentinelPattern = new RegExp(`${sentinel}(-?\\d+)`);
-  const commandLine = wrapWorkspaceCommand(request.command, shell, sentinel);
+  const terminalFailure = (error: { readonly message: string }) =>
+    Effect.sync((): WorkspaceScriptResult => {
+      request.onOutput(`\n${error.message}\n`);
+      return { exitCode: null, timedOut: false };
+    });
+
+  // A shebang only counts on the first line, and a script pasted from Windows
+  // would otherwise run with a `\r` on every line.
+  const script =
+    shell === "powershell"
+      ? request.command
+      : `${request.command.trimStart().replace(/\r\n?/g, "\n")}\n`;
+  const hasShebang = shell !== "powershell" && script.startsWith("#!");
+  const scriptPath = yield* fileSystem
+    .makeTempDirectoryScoped({ prefix: "t3-workspace-script-" })
+    .pipe(
+      Effect.map((directory) =>
+        path.join(directory, shell === "powershell" ? "script.ps1" : "script"),
+      ),
+      Effect.tap((file) => fileSystem.writeFileString(file, script, { mode: 0o700 })),
+      Effect.catch((error) => terminalFailure(error).pipe(Effect.as(null))),
+    );
+  if (scriptPath === null)
+    return { exitCode: null, timedOut: false } satisfies WorkspaceScriptResult;
+  const commandLine = wrapWorkspaceCommand(scriptPath, hasShebang, shell, sentinel);
   const echoedWrapperLines = commandLine.split("\r").filter((line) => line.length > 0);
   const done = yield* Deferred.make<number | null>();
   let partial = "";
@@ -114,12 +157,6 @@ export const runWorkspaceScript = Effect.fn("ForkWorkspaces.runWorkspaceScript")
     }
     return Effect.void;
   };
-
-  const terminalFailure = (error: { readonly message: string }) =>
-    Effect.sync((): WorkspaceScriptResult => {
-      request.onOutput(`\n${error.message}\n`);
-      return { exitCode: null, timedOut: false };
-    });
 
   const opened = yield* terminals
     .open({
@@ -178,4 +215,4 @@ export const runWorkspaceScript = Effect.fn("ForkWorkspaces.runWorkspaceScript")
       Effect.catch(terminalFailure),
       Effect.ensuring(Effect.sync(unsubscribe)),
     );
-});
+}, Effect.scoped);

@@ -376,6 +376,8 @@ export const make = Effect.gen(function* () {
     }).pipe(
       Effect.provideService(TerminalManager.TerminalManager, terminals),
       Effect.provideService(Crypto.Crypto, crypto),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
     );
     const succeeded = result.exitCode === 0;
     appendLog(
@@ -853,6 +855,8 @@ export const make = Effect.gen(function* () {
     }).pipe(
       Effect.provideService(TerminalManager.TerminalManager, terminals),
       Effect.provideService(Crypto.Crypto, crypto),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
       // Ctrl+C or closing the terminal also ends the run.
       Effect.ensuring(
         setRunning(workspace.id, (current) =>

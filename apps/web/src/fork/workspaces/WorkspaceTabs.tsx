@@ -1,8 +1,22 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type { ContextMenuItem, EnvironmentId, ThreadId, Workspace } from "@t3tools/contracts";
-import { ArchiveRestoreIcon, HistoryIcon, MessageSquareIcon, PlusIcon } from "lucide-react";
-import { type KeyboardEvent, type MouseEvent, memo, useEffect, useRef, useState } from "react";
+import {
+  ArchiveRestoreIcon,
+  HistoryIcon,
+  MessageSquareIcon,
+  PlusIcon,
+  SquarePenIcon,
+} from "lucide-react";
+import {
+  type KeyboardEvent,
+  type MouseEvent,
+  type ReactNode,
+  memo,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
 import { resolveRenameCommit } from "../../components/chat/ChatHeader";
 import { Button } from "../../components/ui/button";
@@ -17,9 +31,14 @@ import {
 import { PanelTabCloseButton } from "../../components/ui/panel-tab-close-button";
 import { ScrollArea } from "../../components/ui/scroll-area";
 import { toastManager } from "../../components/ui/toast";
-import { type DraftId, useComposerDraftStore } from "../../composerDraftStore";
+import {
+  DraftId,
+  composerDraftHasUserContent,
+  useComposerDraftStore,
+} from "../../composerDraftStore";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
+import { discardComposerDraft } from "../../lib/discardComposerDraft";
 import { cn } from "../../lib/utils";
 import { readLocalApi } from "../../localApi";
 import { useRightPanelStore } from "../../rightPanelStore";
@@ -30,6 +49,7 @@ import { BrailleSpinner } from "./BrailleSpinner";
 import { showScriptTerminal } from "./RunScriptMenu";
 import { useWorkspaceLastLocation } from "./lastLocation";
 import {
+  draftsForWorkspace,
   isUserChat,
   neighbourAfterClose,
   owningUserChatId,
@@ -38,11 +58,11 @@ import {
   workspaceAcceptsChats,
 } from "./logic";
 import { useWorkspaceForPath } from "./state";
-import { openWorkspaceDraftId, useOpenWorkspace, useWorkspaceDraftKey } from "./useOpenWorkspace";
-import { type ThreadAttention, useThreadAttention } from "./useThreadAttention";
+import { useOpenWorkspace } from "./useOpenWorkspace";
+import { useThreadAttention } from "./useThreadAttention";
 
 type TabMenuAction = "mark-unread" | "rename" | "close" | "close-others";
-const NEW_CHAT_KEY = "new-chat";
+const DRAFT_TITLE = "Untitled";
 
 /** Renders nothing unless the open chat or draft belongs to a workspace. */
 export const WorkspaceTabs = memo(function WorkspaceTabs({
@@ -101,16 +121,22 @@ function WorkspaceTabStrip({
     activeThreadId === null
       ? null
       : (owningUserChatId(environmentThreads, activeThreadId) ?? activeThreadId);
-  const draftKey = useWorkspaceDraftKey()(environmentId, workspace);
-  // Subscribe to a primitive: the lookup builds a new session object per call,
-  // which as a selector result would re-render forever.
-  useComposerDraftStore((state) =>
-    draftKey === null
-      ? null
-      : (state.getDraftSessionByLogicalProjectKey(draftKey)?.draftId ?? null),
+  const sentThreadIds = new Set<string>(members.map((thread) => thread.id));
+  // Subscribe to a primitive so typing re-renders the strip only when a draft
+  // gains or loses its text, not on every keystroke.
+  const draftTabsKey = useComposerDraftStore((state) =>
+    draftsForWorkspace(state.draftThreadsByThreadKey, workspace, {
+      activeDraftId,
+      sentThreadIds,
+      hasContent: (draftId) => composerDraftHasUserContent(state.draftsByThreadKey[draftId]),
+    })
+      .map((draft) => `${draft.hasContent ? 1 : 0}${draft.draftId}`)
+      .join("\n"),
   );
-  const pendingDraftId = openWorkspaceDraftId(draftKey);
-  const draftTabId = activeDraftId ?? pendingDraftId;
+  const drafts = (draftTabsKey.length === 0 ? [] : draftTabsKey.split("\n")).map((entry) => ({
+    draftId: DraftId.make(entry.slice(1)),
+    hasContent: entry[0] === "1",
+  }));
   const [renamingId, setRenamingId] = useState<ThreadId | null>(null);
 
   const remember = useWorkspaceLastLocation((state) => state.remember);
@@ -155,28 +181,46 @@ function WorkspaceTabStrip({
     }
   }, [environmentId, scriptTerminals, viewedThreadId]);
 
-  const tabKeys: ReadonlyArray<string> = [...members.map((thread) => thread.id), NEW_CHAT_KEY];
+  const draftIds = new Set<string>(drafts.map((draft) => draft.draftId));
+  const tabKeys: ReadonlyArray<string> = [
+    ...members.map((thread) => thread.id),
+    ...drafts.map((draft) => draft.draftId),
+  ];
+  const activeKey = activeTabId ?? activeDraftId;
   const selectKey = (key: string) => {
-    if (key !== NEW_CHAT_KEY) void openThread(environmentId, key as ThreadId);
-    else if (draftTabId !== null) void openDraft(draftTabId);
-    else void newChat(environmentId, workspace);
+    if (draftIds.has(key)) void openDraft(DraftId.make(key));
+    else void openThread(environmentId, key as ThreadId);
+  };
+
+  /** Leaves the tab in view before it closes; false when no other tab remains. */
+  const leaveClosingTabs = (closing: ReadonlySet<string>) => {
+    if (activeKey === null || !closing.has(activeKey)) return true;
+    const remaining = tabKeys.filter((key) => !closing.has(key) || key === activeKey);
+    const next = neighbourAfterClose(remaining, activeKey);
+    if (next === null) return false;
+    selectKey(next);
+    return true;
   };
 
   /** Closing archives the chat; the history menu brings it back. */
   const closeChats = async (threadIds: ReadonlyArray<ThreadId>) => {
-    const closing = new Set<string>(threadIds);
-    const activeKey = activeTabId ?? NEW_CHAT_KEY;
-    if (closing.has(activeKey)) {
-      // Leave first: upstream's archive opens a fresh draft when it closes the
-      // chat in view.
-      const remaining = tabKeys.filter((key) => !closing.has(key) || key === activeKey);
-      const next = neighbourAfterClose(remaining, activeKey);
-      if (next !== null) selectKey(next);
-      else await newChat(environmentId, workspace);
-    }
+    // Leave first: upstream's archive opens a fresh draft when it closes the
+    // chat in view.
+    if (!leaveClosingTabs(new Set(threadIds))) await newChat(environmentId, workspace);
     for (const threadId of threadIds) {
       await archiveThread(scopeThreadRef(environmentId, threadId));
     }
+  };
+
+  /** Closing discards the draft, with upstream's undo toast as the way back. */
+  const closeDraft = (draftId: DraftId) => {
+    if (leaveClosingTabs(new Set([draftId]))) {
+      discardComposerDraft(draftId);
+      return;
+    }
+    // The last tab keeps its draft open and only loses the text.
+    const session = useComposerDraftStore.getState().getDraftSession(draftId);
+    if (session !== null) discardComposerDraft(scopeThreadRef(environmentId, session.threadId));
   };
 
   const commitRename = (thread: EnvironmentThreadShell, title: string) => {
@@ -216,7 +260,7 @@ function WorkspaceTabStrip({
   const tabListRef = useRef<HTMLDivElement>(null);
   const onTabKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (tabKeys.length === 0) return;
-    const index = tabKeys.indexOf(activeTabId ?? NEW_CHAT_KEY);
+    const index = activeKey === null ? -1 : tabKeys.indexOf(activeKey);
     const target =
       event.key === "ArrowRight"
         ? (index + 1) % tabKeys.length
@@ -243,40 +287,60 @@ function WorkspaceTabStrip({
           onKeyDown={onTabKeyDown}
           className="flex h-full w-max min-w-full items-center gap-1"
         >
-          {members.map((thread) => (
+          {members.map((thread) => {
+            const attention = attentionOf(thread);
+            return (
+              <ChatTab
+                key={thread.id}
+                title={thread.title}
+                icon={
+                  attention.working ? (
+                    <BrailleSpinner className="text-2xs" />
+                  ) : (
+                    <MessageSquareIcon className="size-3" />
+                  )
+                }
+                unread={attention.unread}
+                active={thread.id === activeTabId}
+                renaming={renamingId === thread.id}
+                onSelect={() => void openThread(environmentId, thread.id)}
+                onClose={() => void closeChats([thread.id])}
+                onContextMenu={(event) => void showMenu(event, thread)}
+                onFinishRename={(title) => commitRename(thread, title)}
+              />
+            );
+          })}
+          {drafts.map((draft) => (
             <ChatTab
-              key={thread.id}
-              title={thread.title}
-              attention={attentionOf(thread)}
-              active={thread.id === activeTabId}
-              renaming={renamingId === thread.id}
-              onSelect={() => void openThread(environmentId, thread.id)}
-              onClose={() => void closeChats([thread.id])}
-              onContextMenu={(event) => void showMenu(event, thread)}
-              onFinishRename={(title) => commitRename(thread, title)}
+              key={draft.draftId}
+              title={DRAFT_TITLE}
+              closeLabel="Discard draft"
+              icon={
+                draft.hasContent ? (
+                  <SquarePenIcon className="size-3 text-warning-foreground" />
+                ) : (
+                  <MessageSquareIcon className="size-3" />
+                )
+              }
+              unread={false}
+              active={draft.draftId === activeDraftId}
+              renaming={false}
+              onSelect={() => void openDraft(draft.draftId)}
+              onClose={() => closeDraft(draft.draftId)}
             />
           ))}
-          {/* The new-chat tab: selected while its draft is open, and it keeps
-              an unsent draft rather than starting over. */}
-          <button
-            type="button"
-            role="tab"
-            aria-label="New chat"
-            aria-selected={activeDraftId !== null}
-            tabIndex={activeDraftId !== null ? 0 : -1}
-            disabled={!workspaceAcceptsChats(workspace)}
-            onClick={() => selectKey(NEW_CHAT_KEY)}
-            className={cn(
-              "cursor-pointer flex size-6 shrink-0 items-center justify-center rounded-md outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default disabled:opacity-50",
-              activeDraftId !== null
-                ? "bg-accent text-foreground"
-                : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
-            )}
-          >
-            <PlusIcon className="size-3.5" />
-          </button>
         </div>
       </ScrollArea>
+      {/* Always a fresh draft: unsent ones keep their own tabs. */}
+      <Button
+        size="icon-xs"
+        variant="ghost-muted"
+        aria-label="New chat"
+        disabled={!workspaceAcceptsChats(workspace)}
+        onClick={() => void newChat(environmentId, workspace)}
+      >
+        <PlusIcon className="size-3.5" />
+      </Button>
       <ClosedChatsMenu
         environmentId={environmentId}
         workspace={workspace}
@@ -289,15 +353,17 @@ function WorkspaceTabStrip({
 /** Same markup and look as upstream's right-panel tabs (`RightPanelTab`). */
 function ChatTab(props: {
   title: string;
-  attention: ThreadAttention;
+  closeLabel?: string;
+  icon: ReactNode;
+  unread: boolean;
   active: boolean;
   renaming: boolean;
   onSelect: () => void;
   onClose: () => void;
-  onContextMenu: (event: MouseEvent) => void;
-  onFinishRename: (title: string) => void;
+  onContextMenu?: (event: MouseEvent) => void;
+  onFinishRename?: (title: string) => void;
 }) {
-  const unread = props.attention.unread;
+  const unread = props.unread;
   return (
     <div
       data-active-tab={props.active}
@@ -312,12 +378,11 @@ function ChatTab(props: {
       )}
     >
       {/* The icon turns into the close button on hover, as in upstream's tabs. */}
-      <PanelTabCloseButton label={`Close ${props.title}`} onClick={props.onClose}>
-        {props.attention.working ? (
-          <BrailleSpinner className="text-2xs" />
-        ) : (
-          <MessageSquareIcon className="size-3" />
-        )}
+      <PanelTabCloseButton
+        label={props.closeLabel ?? `Close ${props.title}`}
+        onClick={props.onClose}
+      >
+        {props.icon}
       </PanelTabCloseButton>
       {props.renaming ? (
         <input
@@ -328,7 +393,7 @@ function ChatTab(props: {
             element?.focus();
             element?.select();
           }}
-          onBlur={(event) => props.onFinishRename(event.currentTarget.value)}
+          onBlur={(event) => props.onFinishRename?.(event.currentTarget.value)}
           onKeyDown={(event) => {
             event.stopPropagation();
             if (event.key === "Enter") event.currentTarget.blur();

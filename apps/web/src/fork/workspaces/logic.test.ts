@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   accumulateWorkspaceLog,
   compactRelativeTime,
+  draftsForWorkspace,
   formatIssueForPrompt,
   matchHashReferences,
   workspaceLastActivity,
@@ -90,6 +91,49 @@ describe("threadsForWorkspace", () => {
     expect(owningUserChatId(threads, "helper-of-helper")).toBe("lead");
     expect(owningUserChatId(threads, "lead")).toBe("lead");
     expect(owningUserChatId(threads, "orphan")).toBeNull();
+  });
+});
+
+describe("draftsForWorkspace", () => {
+  const draft = (
+    threadId: string,
+    createdAt: string,
+    overrides: { worktreePath?: string; projectId?: ProjectId; promoted?: boolean } = {},
+  ) => ({
+    threadId,
+    createdAt,
+    projectId: overrides.projectId ?? projectId,
+    worktreePath: overrides.worktreePath ?? "/worktrees/repo/oslo",
+    promotedTo: overrides.promoted ? { threadId } : null,
+  });
+  const sessions = {
+    second: draft("t-second", "2026-10-19T02:00:00.000Z"),
+    first: draft("t-first", "2026-10-19T01:00:00.000Z"),
+    blank: draft("t-blank", "2026-10-19T03:00:00.000Z"),
+    sending: draft("t-sending", "2026-10-19T04:00:00.000Z", { promoted: true }),
+    sent: draft("t-sent", "2026-10-19T05:00:00.000Z"),
+    elsewhere: draft("t-elsewhere", "2026-10-19T06:00:00.000Z", { worktreePath: "/repo" }),
+    otherProject: draft("t-other", "2026-10-19T07:00:00.000Z", {
+      projectId: ProjectId.make("other"),
+    }),
+  };
+  const options = (activeDraftId: string | null) => ({
+    activeDraftId,
+    sentThreadIds: new Set(["t-sent"]),
+    hasContent: (draftId: string) => draftId !== "blank",
+  });
+
+  it("lists the workspace's unsent drafts that hold text, oldest first", () => {
+    expect(draftsForWorkspace(sessions, workspace(), options(null))).toEqual([
+      { draftId: "first", hasContent: true },
+      { draftId: "second", hasContent: true },
+    ]);
+  });
+
+  it("shows an empty draft only while it is open", () => {
+    expect(
+      draftsForWorkspace(sessions, workspace(), options("blank")).map((entry) => entry.draftId),
+    ).toEqual(["first", "second", "blank"]);
   });
 });
 

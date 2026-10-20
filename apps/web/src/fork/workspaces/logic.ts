@@ -80,6 +80,45 @@ export function threadsForWorkspace<T extends WorkspaceThreadCandidate>(
     .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
 }
 
+interface WorkspaceDraftCandidate {
+  readonly projectId: ProjectId;
+  readonly worktreePath: string | null;
+  readonly threadId: string;
+  readonly createdAt: string;
+  readonly promotedTo?: unknown;
+}
+
+export interface WorkspaceDraftTab<K extends string> {
+  readonly draftId: K;
+  readonly hasContent: boolean;
+}
+
+/**
+ * A workspace's unsent drafts, oldest first. Empty drafts only show while open,
+ * so a draft abandoned before typing leaves no tab behind.
+ */
+export function draftsForWorkspace<K extends string>(
+  sessions: Readonly<Record<K, WorkspaceDraftCandidate>>,
+  workspace: Pick<Workspace, "projectId" | "worktreePath">,
+  options: {
+    readonly activeDraftId: string | null;
+    readonly sentThreadIds: ReadonlySet<string>;
+    readonly hasContent: (draftId: K) => boolean;
+  },
+): ReadonlyArray<WorkspaceDraftTab<K>> {
+  return (Object.entries(sessions) as Array<[K, WorkspaceDraftCandidate]>)
+    .filter(
+      ([, session]) =>
+        session.promotedTo == null &&
+        session.projectId === workspace.projectId &&
+        sameWorkspacePath(session.worktreePath, workspace.worktreePath) &&
+        !options.sentThreadIds.has(session.threadId),
+    )
+    .toSorted(([, left], [, right]) => left.createdAt.localeCompare(right.createdAt))
+    .map(([draftId]) => ({ draftId, hasContent: options.hasContent(draftId) }))
+    .filter((draft) => draft.hasContent || draft.draftId === options.activeDraftId);
+}
+
 /** Project threads that predate workspaces or came from clients without them. */
 export function unassignedProjectThreads<T extends WorkspaceThreadCandidate>(
   threads: ReadonlyArray<T>,

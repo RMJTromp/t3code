@@ -25,7 +25,7 @@ import { buildThreadRouteParams } from "../../threadRoutes";
 import { queueWorkspaceFirstSend } from "./firstSend";
 import { withForkDraftSlot } from "./interceptNewThread";
 import { useWorkspaceLastLocation } from "./lastLocation";
-import { threadsForWorkspace, workspaceDraftSlot } from "./logic";
+import { sameWorkspacePath, threadsForWorkspace, workspaceDraftSlot } from "./logic";
 import { forkWorkspaceEnvironment } from "./state";
 
 /** The draft slot upstream's new-thread handler uses for this workspace. */
@@ -40,7 +40,19 @@ export function useWorkspaceDraftKey() {
   };
 }
 
-/** A workspace draft that has not been sent yet, if one exists. */
+/** Whether a draft is still an unsent chat in this workspace. */
+function isOpenWorkspaceDraft(draftId: DraftId, workspace: Workspace): boolean {
+  const session = useComposerDraftStore.getState().getDraftSession(draftId);
+  return (
+    session !== null &&
+    session.promotedTo == null &&
+    session.projectId === workspace.projectId &&
+    sameWorkspacePath(session.worktreePath, workspace.worktreePath) &&
+    readThreadShell(scopeThreadRef(session.environmentId, session.threadId)) === null
+  );
+}
+
+/** The workspace's mapped draft that has not been sent yet, if one exists. */
 export function openWorkspaceDraftId(logicalProjectKey: string | null): DraftId | null {
   if (logicalProjectKey === null) return null;
   const session = useComposerDraftStore
@@ -89,8 +101,8 @@ export function useOpenWorkspace() {
       await openThread(environmentId, last.threadId);
       return;
     }
-    if (last?.kind === "draft" && last.draftId === pendingDraft) {
-      await openDraft(pendingDraft);
+    if (last?.kind === "draft" && isOpenWorkspaceDraft(last.draftId, workspace)) {
+      await openDraft(last.draftId);
       return;
     }
     if (pendingDraft !== null) {

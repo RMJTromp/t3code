@@ -12,7 +12,13 @@ import {
   AuthSourceControlWriteScope,
   EnvironmentAuthorizationError,
 } from "../auth.ts";
-import { IsoDateTime, ProjectId, ThreadId, TrimmedNonEmptyString } from "../baseSchemas.ts";
+import {
+  IsoDateTime,
+  PositiveInt,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "../baseSchemas.ts";
 
 export const WorkspaceId = TrimmedNonEmptyString.pipe(Schema.brand("WorkspaceId"));
 export type WorkspaceId = typeof WorkspaceId.Type;
@@ -67,6 +73,18 @@ export const ProjectWorkspaceScripts = Schema.Struct({
 });
 export type ProjectWorkspaceScripts = typeof ProjectWorkspaceScripts.Type;
 
+/** How the worktree is made; kept on the workspace so a retry repeats it. */
+export const WorkspaceCheckout = Schema.Union([
+  /** A new city-named branch cut from `baseRef`. */
+  Schema.Struct({ type: Schema.Literal("new"), startFromOrigin: Schema.Boolean }),
+  /** The existing `branch`, local or on origin. */
+  Schema.Struct({ type: Schema.Literal("branch") }),
+  Schema.Struct({ type: Schema.Literal("pullRequest"), number: PositiveInt }),
+]);
+export type WorkspaceCheckout = typeof WorkspaceCheckout.Type;
+
+const DEFAULT_WORKSPACE_CHECKOUT: WorkspaceCheckout = { type: "new", startFromOrigin: true };
+
 export const Workspace = Schema.Struct({
   id: WorkspaceId,
   projectId: ProjectId,
@@ -86,6 +104,11 @@ export const Workspace = Schema.Struct({
   /** Extra project scripts running in this workspace's terminals. */
   runningScripts: Schema.Array(WorkspaceRunningScript).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  /** True from creation until its setup script has finished, whether or not one ran. */
+  setupPending: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  checkout: WorkspaceCheckout.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_WORKSPACE_CHECKOUT)),
   ),
   createdAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime),
@@ -109,6 +132,7 @@ export class WorkspaceError extends Schema.TaggedError<WorkspaceError>()("Worksp
     "git-failed",
     "script-failed",
     "persistence-failed",
+    "github-cli-unavailable",
   ]),
   message: Schema.String,
   /** Uncommitted and untracked paths when `reason` is `uncommitted-changes`. */
@@ -119,6 +143,15 @@ export const WorkspaceCreateInput = Schema.Struct({
   projectId: ProjectId,
   /** The client's draft for this workspace; setup output streams into its terminal. */
   setupThreadId: Schema.optional(ThreadId),
+  /** Local branch name the new branch starts from; the default branch when absent. */
+  baseRef: Schema.optional(TrimmedNonEmptyString),
+  checkout: Schema.optional(
+    Schema.Union([
+      Schema.Struct({ type: Schema.Literal("new"), startFromOrigin: Schema.Boolean }),
+      Schema.Struct({ type: Schema.Literal("branch"), branch: TrimmedNonEmptyString }),
+      Schema.Struct({ type: Schema.Literal("pullRequest"), number: PositiveInt }),
+    ]),
+  ),
 });
 export type WorkspaceCreateInput = typeof WorkspaceCreateInput.Type;
 
@@ -141,6 +174,25 @@ export const WorkspaceRunScriptInput = Schema.Struct({
 });
 export type WorkspaceRunScriptInput = typeof WorkspaceRunScriptInput.Type;
 
+/** An open issue from the GitHub CLI; `body` only when one issue is read for a prompt. */
+export const WorkspaceIssue = Schema.Struct({
+  number: PositiveInt,
+  title: Schema.String,
+  url: Schema.String,
+  body: Schema.optional(Schema.String),
+});
+export type WorkspaceIssue = typeof WorkspaceIssue.Type;
+
+/** An open pull request from the GitHub CLI, for checking it out in a workspace. */
+export const WorkspacePullRequest = Schema.Struct({
+  number: PositiveInt,
+  title: Schema.String,
+  url: Schema.String,
+  headBranch: Schema.String,
+  baseBranch: Schema.String,
+});
+export type WorkspacePullRequest = typeof WorkspacePullRequest.Type;
+
 /**
  * Every fork mutation travels through one RPC. Upstream's RPC group sits close
  * to a TypeScript complexity limit, so each extra fork RPC risks breaking the
@@ -153,10 +205,21 @@ export const WorkspaceCommand = Schema.Union([
   Schema.Struct({ type: Schema.Literal("retry"), ...WorkspaceRefInput.fields }),
   Schema.Struct({ type: Schema.Literal("runScript"), ...WorkspaceRunScriptInput.fields }),
   Schema.Struct({ type: Schema.Literal("setProjectScripts"), scripts: ProjectWorkspaceScripts }),
+  // GitHub CLI reads ride the command RPC too, for the same reason; they change nothing.
+  Schema.Struct({
+    type: Schema.Literals(["listIssues", "listPullRequests"]),
+    projectId: ProjectId,
+    query: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(200))),
+  }),
+  Schema.Struct({ type: Schema.Literal("readIssue"), projectId: ProjectId, number: PositiveInt }),
 ]);
 export type WorkspaceCommand = typeof WorkspaceCommand.Type;
 
-export const WorkspaceCommandResult = Schema.Struct({ workspace: Schema.NullOr(Workspace) });
+export const WorkspaceCommandResult = Schema.Struct({
+  workspace: Schema.NullOr(Workspace),
+  issues: Schema.optional(Schema.Array(WorkspaceIssue)),
+  pullRequests: Schema.optional(Schema.Array(WorkspacePullRequest)),
+});
 export type WorkspaceCommandResult = typeof WorkspaceCommandResult.Type;
 
 export const WorkspaceStateEvent = Schema.Struct({

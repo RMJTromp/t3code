@@ -5,13 +5,37 @@ side by side. Each one is a git worktree named after a city, such as `oslo`.
 
 ## Create a workspace
 
-Click **+** next to a repository in the sidebar. T3 Code creates the workspace right away: it
-fetches the latest default branch from `origin` when the repository has one, creates a worktree
-named after a city on a branch that uses your **Settings → Source Control → Worktree branch
-naming** prefix (for example `t3/oslo`), and opens its first chat. The setup script's output
-streams live in a terminal in the right panel.
+Click **+** next to a repository in the sidebar to open the new-workspace composer:
 
-The **+** next to **Workspaces** asks which repository to use. To start from a folder or a git URL
+- **What do you want to work on?** becomes the workspace's first message. Leave it empty to
+  open an empty chat instead. The footer picks that chat's model, reasoning, and access, like the
+  chat composer.
+- The repository menu at the top left switches repositories.
+- The branch next to it is the **target branch**, which the new branch starts from. It defaults
+  to the repository's default branch. **Start from remote** in its menu uses origin's latest copy.
+- The branch icon at the top right checks out something that already exists instead. Pick a
+  branch, or an open pull request from **Pull requests**. A branch that is already checked out in
+  another folder can't be picked. Your choice replaces the icon; click it to change it, or hover
+  it and click the **x** to go back to a new branch.
+- **Issues** in the same menu appends an open issue to your message as a fenced Markdown block
+  (a linked heading, then its body), with the cursor placed below it. You can edit it before
+  sending. Removing the issue removes that
+  text, unless you changed it.
+- Pull requests and issues come from the GitHub CLI on the machine running T3 Code, so install
+  `gh` and run `gh auth login` there. Without it, pull requests come from **Settings → Source
+  Control** instead, and issues are unavailable. All three lists load as soon as the composer
+  opens.
+
+T3 Code then creates the workspace: a worktree named after a city, on a new branch that uses your
+**Settings → Source Control → Worktree branch naming** prefix (for example `t3/oslo`), or on the
+branch or pull request you picked. It opens the first chat right away, and the setup script's
+output streams live in a terminal in the right panel. Your message is sent once setup finishes. If
+setup fails, it stays in the composer for you to send yourself.
+
+Hold **⌘** (macOS) or **Ctrl** while clicking **+** to skip the composer and create a workspace
+on a new branch from the default branch at once.
+
+The **+** next to **Workspaces** opens the same composer for the repository you are viewing. To start from a folder or a git URL
 you have not added yet, use **Add repository** first.
 
 Starting a new chat in a repository from anywhere else, such as the command palette or a shortcut,

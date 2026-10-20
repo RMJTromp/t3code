@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   accumulateWorkspaceLog,
   compactRelativeTime,
+  formatIssueForPrompt,
   workspaceLastActivity,
   neighbourAfterClose,
   routeNewThread,
@@ -28,6 +29,8 @@ function workspace(overrides: Partial<Workspace> = {}): Workspace {
     lastScript: null,
     setupTerminal: null,
     runningScripts: [],
+    setupPending: false,
+    checkout: { type: "new", startFromOrigin: true },
     createdAt: "2026-10-19T00:00:00.000Z",
     archivedAt: null,
     ...overrides,
@@ -136,5 +139,21 @@ describe("workspace activity", () => {
   it("drops the ago suffix", () => {
     expect(compactRelativeTime("3h ago")).toBe("3h");
     expect(compactRelativeTime("just now")).toBe("now");
+  });
+});
+
+describe("formatIssueForPrompt", () => {
+  const issue = { number: 12, title: "Crash on start", url: "https://example.com/12" };
+
+  it("fences the issue and leaves a blank line to keep typing after", () => {
+    expect(formatIssueForPrompt({ ...issue, body: "Steps\n" })).toBe(
+      "```md\n## [#12: Crash on start](https://example.com/12)\n\nSteps\n```\n\n",
+    );
+  });
+
+  it("outgrows the body's own fences", () => {
+    const formatted = formatIssueForPrompt({ ...issue, body: "```ts\nboom()\n```" });
+    expect(formatted.startsWith("````md\n")).toBe(true);
+    expect(formatted.endsWith("\n````\n\n")).toBe(true);
   });
 });

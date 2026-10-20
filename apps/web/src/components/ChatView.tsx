@@ -339,6 +339,7 @@ import {
   useComposerDraftStore,
   DraftId,
 } from "../composerDraftStore";
+import { useWorkspaceFirstSend } from "../fork/workspaces/firstSend"; // fork:workspaces
 import { WorkspaceTabs } from "../fork/workspaces/WorkspaceTabs"; // fork:workspaces
 import {
   formatTerminalContextLabel,
@@ -7940,6 +7941,7 @@ export default function ChatView(props: ChatViewProps) {
       composerRef.current?.addDroppedFolders(folders),
   );
 
+  useWorkspaceFirstSend(draftId, () => onSend()); // fork:workspaces
   if (!activeThread) {
     return <NoActiveThreadState />;
   }

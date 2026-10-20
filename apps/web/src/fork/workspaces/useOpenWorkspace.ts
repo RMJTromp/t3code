@@ -1,5 +1,13 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, ProjectId, ThreadId, Workspace } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ModelSelection,
+  ProjectId,
+  RuntimeMode,
+  ThreadId,
+  Workspace,
+  WorkspaceCommand,
+} from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 
 import { type DraftId, useComposerDraftStore } from "../../composerDraftStore";
@@ -13,6 +21,7 @@ import { readProject, readThreadShell, readThreadShells } from "../../state/enti
 import { newThreadId } from "../../lib/utils";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { buildThreadRouteParams } from "../../threadRoutes";
+import { queueWorkspaceFirstSend } from "./firstSend";
 import { withForkDraftSlot } from "./interceptNewThread";
 import { useWorkspaceLastLocation } from "./lastLocation";
 import { threadsForWorkspace, workspaceDraftSlot } from "./logic";
@@ -100,6 +109,15 @@ export function useOpenWorkspace() {
   return { open, newChat, openDraft, openThread };
 }
 
+/** What the new-workspace dialog chose; the sidebar's quick create passes none. */
+export interface WorkspaceCreateOptions {
+  readonly baseRef?: string;
+  readonly checkout?: Extract<WorkspaceCommand, { type: "create" }>["checkout"];
+  readonly prompt?: string;
+  readonly modelSelection?: ModelSelection;
+  readonly runtimeMode?: RuntimeMode;
+}
+
 /**
  * Creates a workspace and opens its first chat at once. The chat's thread id
  * is chosen here so the server runs setup in that chat's terminal.
@@ -107,15 +125,39 @@ export function useOpenWorkspace() {
 export function useCreateWorkspace() {
   const command = useAtomCommand(forkWorkspaceEnvironment.command);
   const { newChat } = useOpenWorkspace();
-  return async (environmentId: EnvironmentId, projectId: ProjectId): Promise<Workspace | null> => {
+  return async (
+    environmentId: EnvironmentId,
+    projectId: ProjectId,
+    options: WorkspaceCreateOptions = {},
+  ): Promise<Workspace | null> => {
     const setupThreadId = newThreadId();
     const result = await command({
       environmentId,
-      input: { type: "create", projectId, setupThreadId },
+      input: {
+        type: "create",
+        projectId,
+        setupThreadId,
+        ...(options.baseRef === undefined ? {} : { baseRef: options.baseRef }),
+        ...(options.checkout === undefined ? {} : { checkout: options.checkout }),
+      },
     });
     const workspace = result._tag === "Success" ? result.value.workspace : null;
     if (workspace === null) return null;
-    await newChat(environmentId, workspace, setupThreadId);
+    const opened = await newChat(environmentId, workspace, setupThreadId);
+    if (opened !== null) {
+      const drafts = useComposerDraftStore.getState();
+      if (options.modelSelection !== undefined) {
+        drafts.setModelSelection(opened.draftId, options.modelSelection, { explicit: true });
+      }
+      if (options.runtimeMode !== undefined) {
+        drafts.setRuntimeMode(opened.draftId, options.runtimeMode);
+      }
+      const prompt = options.prompt?.trim() ?? "";
+      if (prompt.length > 0) {
+        drafts.setPrompt(opened.draftId, prompt);
+        queueWorkspaceFirstSend(opened.threadId);
+      }
+    }
     return workspace;
   };
 }

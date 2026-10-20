@@ -204,6 +204,26 @@ function servicesLayer(fixture: Fixture) {
     }),
     Layer.mock(GitWorkflowService.GitWorkflowService)({
       remoteExists: () => Effect.succeed(false),
+      fetchRemote: () => Effect.void,
+      // Stands in for the host checkout: the PR's head lands on its own branch.
+      preparePullRequestThread: (input) =>
+        Effect.sync(() => {
+          const branch = `pr-${input.reference}`;
+          git(input.cwd, "checkout", "-b", branch);
+          return {
+            pullRequest: {
+              number: Number(input.reference),
+              title: "PR",
+              url: "https://example.com/pr",
+              baseBranch: "main",
+              headBranch: branch,
+              state: "open" as const,
+            },
+            branch,
+            worktreePath: null,
+            isOnPullRequestHead: true,
+          };
+        }),
       createWorktree: (input) =>
         Effect.sync(() => {
           const target = input.path!;
@@ -264,9 +284,10 @@ describe("WorkspaceService", () => {
         setupThreadId: ThreadId.make("thread-draft"),
       });
       assert.equal(created.status, "creating");
+      assert.isTrue(created.setupPending);
       const ready = yield* awaitWorkspace(
         service,
-        (workspace) => workspace.status === "ready" && scriptDone(workspace),
+        (workspace) => workspace.status === "ready" && !workspace.setupPending,
       );
       assert.equal(ready.name, created.name);
       assert.equal(ready.branch, `fork/${ready.name}`);
@@ -449,6 +470,150 @@ describe("WorkspaceService", () => {
     );
   });
 
+  it.live("starts a new branch from the chosen base", () => {
+    const fixture = makeFixture();
+    git(fixture.root, "checkout", "-b", "dev");
+    NodeFS.writeFileSync(NodePath.join(fixture.root, "dev.txt"), "dev");
+    git(fixture.root, "add", ".");
+    git(fixture.root, "commit", "-m", "dev");
+    git(fixture.root, "checkout", "main");
+    return Effect.gen(function* () {
+      const service = yield* WorkspaceService.make;
+      const created = yield* service.create({
+        projectId: fixture.projectId,
+        baseRef: "dev",
+        checkout: { type: "new", startFromOrigin: false },
+      });
+      const ready = yield* awaitWorkspace(
+        service,
+        (workspace) => workspace.id === created.id && workspace.status === "ready",
+      );
+      assert.equal(ready.baseRef, "dev");
+      assert.equal(ready.branch, `fork/${ready.name}`);
+      assert.isTrue(NodeFS.existsSync(NodePath.join(ready.worktreePath, "dev.txt")));
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(WorkspaceStore.layer.pipe(Layer.provideMerge(servicesLayer(fixture)))),
+    );
+  });
+
+  it.live("checks out an existing branch instead of creating one", () => {
+    const fixture = makeFixture();
+    git(fixture.root, "branch", "feature");
+    // A branch only origin has, as after a fetch.
+    git(fixture.root, "remote", "add", "origin", fixture.root);
+    git(fixture.root, "update-ref", "refs/remotes/origin/remote-only", "HEAD");
+    return Effect.gen(function* () {
+      const service = yield* WorkspaceService.make;
+      const local = yield* service.create({
+        projectId: fixture.projectId,
+        checkout: { type: "branch", branch: "feature" },
+      });
+      assert.equal(local.branch, "feature");
+      const remote = yield* service.create({
+        projectId: fixture.projectId,
+        checkout: { type: "branch", branch: "remote-only" },
+      });
+      const ready = (id: WorkspaceId) =>
+        awaitWorkspace(service, (workspace) => workspace.id === id && workspace.status === "ready");
+      const localReady = yield* ready(local.id);
+      const remoteReady = yield* ready(remote.id);
+      assert.equal(git(localReady.worktreePath, "rev-parse", "--abbrev-ref", "HEAD"), "feature");
+      assert.equal(
+        git(remoteReady.worktreePath, "rev-parse", "--abbrev-ref", "@{upstream}"),
+        "origin/remote-only",
+      );
+      assert.notInclude(git(fixture.root, "branch", "--list"), "fork/");
+
+      const taken = yield* service
+        .create({ projectId: fixture.projectId, checkout: { type: "branch", branch: "main" } })
+        .pipe(Effect.flip);
+      assert.equal(taken.reason, "invalid-state");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(WorkspaceStore.layer.pipe(Layer.provideMerge(servicesLayer(fixture)))),
+    );
+  });
+
+  it.live("checks out a pull request in its own workspace", () => {
+    const fixture = makeFixture();
+    return Effect.gen(function* () {
+      const service = yield* WorkspaceService.make;
+      const created = yield* service.create({
+        projectId: fixture.projectId,
+        baseRef: "main",
+        checkout: { type: "pullRequest", number: 42 },
+      });
+      assert.isNull(created.branch);
+      const ready = yield* awaitWorkspace(
+        service,
+        (workspace) => workspace.id === created.id && workspace.status === "ready",
+      );
+      assert.equal(ready.branch, "pr-42");
+      assert.deepEqual(ready.checkout, { type: "pullRequest", number: 42 });
+      assert.equal(git(ready.worktreePath, "rev-parse", "--abbrev-ref", "HEAD"), "pr-42");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(WorkspaceStore.layer.pipe(Layer.provideMerge(servicesLayer(fixture)))),
+    );
+  });
+
+  it.live("lists issues and pull requests through the GitHub CLI", () => {
+    const fixture = makeFixture();
+    // A stand-in gh that answers the two calls the service makes.
+    const bin = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "fork-ws-gh-"));
+    NodeFS.writeFileSync(
+      NodePath.join(bin, "gh"),
+      [
+        "#!/bin/sh",
+        'if [ "$1" = "pr" ]; then',
+        `  echo '[{"number":9,"title":"Fix crash","url":"https://example.com/9","headRefName":"fix","baseRefName":"main"}]'`,
+        'elif [ "$2" = "list" ]; then',
+        `  echo '[{"number":7,"title":"Crash on start","url":"https://example.com/7"}]'`,
+        'elif [ "$3" = "404" ]; then',
+        "  echo 'issue not found' >&2; exit 1",
+        "else",
+        `  echo '{"number":7,"title":"Crash on start","url":"https://example.com/7","body":"Steps"}'`,
+        "fi",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${bin}${NodePath.delimiter}${previousPath ?? ""}`;
+    return Effect.gen(function* () {
+      const service = yield* WorkspaceService.make;
+      const issues = yield* service.listIssues({ projectId: fixture.projectId, query: "crash" });
+      assert.deepEqual(issues, [
+        { number: 7, title: "Crash on start", url: "https://example.com/7" },
+      ]);
+      const pullRequests = yield* service.listPullRequests({ projectId: fixture.projectId });
+      assert.deepEqual(pullRequests, [
+        {
+          number: 9,
+          title: "Fix crash",
+          url: "https://example.com/9",
+          headBranch: "fix",
+          baseBranch: "main",
+        },
+      ]);
+      const issue = yield* service.readIssue({ projectId: fixture.projectId, number: 7 });
+      assert.equal(issue.body, "Steps");
+      const missing = yield* service
+        .readIssue({ projectId: fixture.projectId, number: 404 })
+        .pipe(Effect.flip);
+      assert.equal(missing.reason, "github-cli-unavailable");
+      assert.equal(missing.message, "issue not found");
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          process.env.PATH = previousPath;
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(WorkspaceStore.layer.pipe(Layer.provideMerge(servicesLayer(fixture)))),
+    );
+  });
+
   it.effect("turns operations a restart interrupted into explicit retries", () => {
     const fixture = makeFixture();
     return Effect.gen(function* () {
@@ -466,6 +631,8 @@ describe("WorkspaceService", () => {
         lastScript: null,
         setupTerminal: null,
         runningScripts: [],
+        setupPending: true,
+        checkout: { type: "new", startFromOrigin: true },
         createdAt: "2026-10-19T00:00:00.000Z",
         archivedAt: null,
       };

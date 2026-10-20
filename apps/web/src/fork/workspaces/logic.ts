@@ -2,6 +2,7 @@ import {
   normalizeWorkspacePath,
   type ProjectId,
   type Workspace,
+  type WorkspaceIssue,
   type WorkspaceLogEvent,
 } from "@t3tools/contracts";
 
@@ -132,4 +133,18 @@ export function workspaceLastActivity(
 export function compactRelativeTime(label: string): string {
   if (label === "just now") return "now";
   return label.endsWith(" ago") ? label.slice(0, -4) : label;
+}
+
+/**
+ * The issue as a fenced Markdown block, then a blank line so typing continues
+ * below it. The fence outgrows any backtick run in the body, so the body's own
+ * code blocks cannot close it early.
+ */
+export function formatIssueForPrompt(issue: WorkspaceIssue): string {
+  const body = issue.body?.trim() ?? "";
+  const longestRun = Math.max(0, ...(body.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = "`".repeat(Math.max(3, longestRun + 1));
+  const heading = `## [#${issue.number}: ${issue.title}](${issue.url})`;
+  const content = body.length > 0 ? `${heading}\n\n${body}` : heading;
+  return `${fence}md\n${content}\n${fence}\n\n`;
 }

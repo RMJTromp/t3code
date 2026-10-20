@@ -35,6 +35,18 @@ export const makeForkWorkspaceHandlers = Effect.gen(function* () {
           return workspaces.runProjectScript(command).pipe(withWorkspace);
         case "setProjectScripts":
           return workspaces.setProjectScripts(command.scripts).pipe(Effect.as({ workspace: null }));
+        case "listIssues":
+          return workspaces
+            .listIssues(command)
+            .pipe(Effect.map((issues) => ({ workspace: null, issues })));
+        case "listPullRequests":
+          return workspaces
+            .listPullRequests(command)
+            .pipe(Effect.map((pullRequests) => ({ workspace: null, pullRequests })));
+        case "readIssue":
+          return workspaces
+            .readIssue(command)
+            .pipe(Effect.map((issue) => ({ workspace: null, issues: [issue] })));
       }
     },
     [FORK_WORKSPACE_WS_METHODS.forkSubscribeWorkspaces]: () => workspaces.stream,

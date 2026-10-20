@@ -9,6 +9,8 @@ import {
   type Workspace,
   type WorkspaceArchiveInput,
   type WorkspaceCreateInput,
+  WorkspaceIssue,
+  type WorkspacePullRequest,
   type ProjectWorkspaceScripts,
   type WorkspaceRunScriptInput,
   type WorkspaceRunningScript,
@@ -77,10 +79,43 @@ export class WorkspaceService extends Context.Service<
     readonly setProjectScripts: (
       scripts: ProjectWorkspaceScripts,
     ) => Effect.Effect<ProjectWorkspaceScripts, WorkspaceError>;
+    /** Open issues through the GitHub CLI, which brings its own auth. */
+    readonly listIssues: (input: {
+      readonly projectId: ProjectId;
+      readonly query?: string | undefined;
+    }) => Effect.Effect<ReadonlyArray<WorkspaceIssue>, WorkspaceError>;
+    readonly listPullRequests: (input: {
+      readonly projectId: ProjectId;
+      readonly query?: string | undefined;
+    }) => Effect.Effect<ReadonlyArray<WorkspacePullRequest>, WorkspaceError>;
+    readonly readIssue: (input: {
+      readonly projectId: ProjectId;
+      readonly number: number;
+    }) => Effect.Effect<WorkspaceIssue, WorkspaceError>;
   }
 >()("t3/fork/workspaces/WorkspaceService") {}
 
 const OUTBOX_DRAIN_TIMEOUT = Duration.seconds(30);
+const GH_LIST_LIMIT = 50;
+// A first message stays readable; the agent can still `gh issue view` the rest.
+const ISSUE_BODY_MAX_CHARS = 20_000;
+const decodeIssues = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Array(WorkspaceIssue)),
+);
+const decodeIssue = Schema.decodeUnknownEffect(Schema.fromJsonString(WorkspaceIssue));
+const decodeGhPullRequests = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Array(
+      Schema.Struct({
+        number: Schema.Int,
+        title: Schema.String,
+        url: Schema.String,
+        headRefName: Schema.String,
+        baseRefName: Schema.String,
+      }),
+    ),
+  ),
+);
 const SETUP_TERMINAL_ID = "workspace-setup";
 const ARCHIVE_TERMINAL_ID = "workspace-archive";
 const decodeProjectFileConfig = Schema.decodeUnknownOption(
@@ -432,72 +467,176 @@ export const make = Effect.gen(function* () {
       Effect.asVoid,
     );
 
+  /** The commit a new worktree starts from: origin's copy of `baseRef` when asked and present. */
+  const resolveStartRef = Effect.fn("WorkspaceService.resolveStartRef")(function* (
+    workspaceId: WorkspaceId,
+    root: string,
+    baseRef: string,
+    startFromOrigin: boolean,
+  ) {
+    if (!startFromOrigin) return baseRef;
+    const hasOrigin = yield* git
+      .remoteExists({ cwd: root, remoteName: "origin" })
+      .pipe(Effect.orElseSucceed(() => false));
+    if (!hasOrigin) return baseRef;
+    appendLog(workspaceId, `Fetching origin/${baseRef}…\n`);
+    yield* git
+      .fetchRemote({ cwd: root, remoteName: "origin", refName: baseRef })
+      .pipe(
+        Effect.catch((error) => Effect.sync(() => appendLog(workspaceId, `${describe(error)}\n`))),
+      );
+    const remoteBase = yield* git
+      .remoteBranchExists({ cwd: root, remoteName: "origin", refName: baseRef })
+      .pipe(Effect.orElseSucceed(() => false));
+    if (!remoteBase) return baseRef;
+    return yield* git
+      .resolveRemoteTrackingCommit({ cwd: root, refName: baseRef, fallbackRemoteName: "origin" })
+      .pipe(
+        Effect.map((resolved) => resolved.commitSha),
+        Effect.orElseSucceed(() => baseRef),
+      );
+  });
+
+  /** Checks out an existing branch, tracking origin's copy when there is no local one. */
+  const checkoutExistingBranch = Effect.fn("WorkspaceService.checkoutExistingBranch")(function* (
+    workspaceId: WorkspaceId,
+    root: string,
+    branch: string,
+    worktreePath: string,
+  ) {
+    let branches = yield* listBranchNames(root);
+    if (!branches.has(branch)) {
+      appendLog(workspaceId, `Fetching origin/${branch}…\n`);
+      yield* git
+        .fetchRemote({ cwd: root, remoteName: "origin", refName: branch })
+        .pipe(
+          Effect.catch((error) =>
+            Effect.sync(() => appendLog(workspaceId, `${describe(error)}\n`)),
+          ),
+        );
+      branches = yield* listBranchNames(root);
+    }
+    appendLog(workspaceId, `Creating worktree ${worktreePath} on ${branch}…\n`);
+    if (branches.has(branch)) {
+      return yield* git
+        .createWorktree({ cwd: root, refName: branch, path: worktreePath })
+        .pipe(Effect.mapError(gitFailure("Could not create the worktree")));
+    }
+    if (!branches.has(`origin/${branch}`)) {
+      return yield* workspaceError("git-failed", `The branch ${branch} no longer exists.`);
+    }
+    // Starting from a remote-tracking ref makes git set it as the upstream.
+    return yield* git
+      .createWorktree({
+        cwd: root,
+        refName: `origin/${branch}`,
+        newRefName: branch,
+        path: worktreePath,
+      })
+      .pipe(Effect.mapError(gitFailure("Could not create the worktree")));
+  });
+
   const provision = Effect.fn("WorkspaceService.provision")(function* (workspaceId: WorkspaceId) {
     const { workspace } = yield* get(workspaceId);
     const project = yield* loadProject(workspace.projectId);
     const root = project.workspaceRoot;
     if (!(yield* exists(workspace.worktreePath))) {
       const baseRef = workspace.baseRef ?? (yield* resolveDefaultBranch(root));
-      let startRef = baseRef;
-      const hasOrigin = yield* git
-        .remoteExists({ cwd: root, remoteName: "origin" })
-        .pipe(Effect.orElseSucceed(() => false));
-      if (hasOrigin) {
-        appendLog(workspaceId, `Fetching origin/${baseRef}…\n`);
+      const checkout = workspace.checkout;
+      let branch = workspace.branch;
+      if (checkout.type === "branch" && branch !== null) {
+        yield* checkoutExistingBranch(workspaceId, root, branch, workspace.worktreePath);
+      } else if (checkout.type === "pullRequest") {
+        // Detached first, so upstream's single-checkout PR flow can run inside it.
+        const startRef = yield* resolveStartRef(workspaceId, root, baseRef, true);
+        // A commit, not a branch name: the branch may be checked out in the main folder.
+        const startCommit = yield* runGit(root, ["rev-parse", "--verify", `${startRef}^{commit}`]);
+        appendLog(workspaceId, `Creating worktree ${workspace.worktreePath}…\n`);
         yield* git
-          .fetchRemote({ cwd: root, remoteName: "origin", refName: baseRef })
-          .pipe(
-            Effect.catch((error) =>
-              Effect.sync(() => appendLog(workspaceId, `${describe(error)}\n`)),
-            ),
-          );
-        const remoteBase = yield* git
-          .remoteBranchExists({ cwd: root, remoteName: "origin", refName: baseRef })
-          .pipe(Effect.orElseSucceed(() => false));
-        if (remoteBase) {
-          startRef = yield* git
-            .resolveRemoteTrackingCommit({
-              cwd: root,
-              refName: baseRef,
-              fallbackRemoteName: "origin",
-            })
-            .pipe(
-              Effect.map((resolved) => resolved.commitSha),
-              Effect.orElseSucceed(() => baseRef),
-            );
-        }
+          .createWorktree({
+            cwd: root,
+            refName: startCommit.ok ? startCommit.stdout : startRef,
+            path: workspace.worktreePath,
+          })
+          .pipe(Effect.mapError(gitFailure("Could not create the worktree")));
+        appendLog(workspaceId, `Checking out pull request #${checkout.number}…\n`);
+        const prepared = yield* git
+          .preparePullRequestThread({
+            cwd: workspace.worktreePath,
+            reference: String(checkout.number),
+            mode: "local",
+          })
+          .pipe(Effect.mapError(gitFailure("Could not check out the pull request")));
+        branch = prepared.branch;
+      } else {
+        branch = branch ?? workspace.name;
+        const startRef = yield* resolveStartRef(
+          workspaceId,
+          root,
+          baseRef,
+          checkout.type === "new" ? checkout.startFromOrigin : true,
+        );
+        appendLog(workspaceId, `Creating worktree ${workspace.worktreePath} on ${branch}…\n`);
+        const branchExists = (yield* listBranchNames(root)).has(branch);
+        yield* git
+          .createWorktree({
+            cwd: root,
+            refName: branchExists ? branch : startRef,
+            ...(branchExists ? {} : { newRefName: branch, baseRefName: baseRef }),
+            path: workspace.worktreePath,
+          })
+          .pipe(Effect.mapError(gitFailure("Could not create the worktree")));
       }
-      const branch = workspace.branch ?? workspace.name;
-      appendLog(workspaceId, `Creating worktree ${workspace.worktreePath} on ${branch}…\n`);
-      const branchExists = (yield* listBranchNames(root)).has(branch);
-      yield* git
-        .createWorktree({
-          cwd: root,
-          refName: branchExists ? branch : startRef,
-          ...(branchExists ? {} : { newRefName: branch, baseRefName: baseRef }),
-          path: workspace.worktreePath,
-        })
-        .pipe(Effect.mapError(gitFailure("Could not create the worktree")));
       yield* update(workspaceId, (record) => ({
         ...record,
-        workspace: { ...record.workspace, baseRef },
+        workspace: { ...record.workspace, baseRef, branch },
       }));
     }
     yield* recordRealPath(workspace);
     yield* setStatus(workspaceId, "ready", { pendingOperation: null, error: null });
     const setupOk = yield* runScript(workspaceId, "setup");
-    if (!setupOk) {
-      yield* update(workspaceId, (record) => ({
-        ...record,
-        workspace: { ...record.workspace, error: "The setup script failed. Chats still work." },
-      }));
-    }
+    // A queued first message waits on this, not on "ready", so it runs after setup.
+    yield* update(workspaceId, (record) => ({
+      ...record,
+      workspace: {
+        ...record.workspace,
+        setupPending: false,
+        ...(setupOk ? {} : { error: "The setup script failed. Chats still work." }),
+      },
+    }));
   });
 
-  const create: WorkspaceService["Service"]["create"] = ({ projectId, setupThreadId }) =>
+  /** The folder that has `branch` checked out, if any; git refuses a second checkout. */
+  const checkedOutAt = (root: string, branch: string) =>
+    runGit(root, ["worktree", "list", "--porcelain"]).pipe(
+      Effect.map((result) => {
+        let current: string | null = null;
+        for (const line of result.ok ? result.stdout.split("\n") : []) {
+          if (line.startsWith("worktree ")) current = line.slice("worktree ".length);
+          if (line === `branch refs/heads/${branch}`) return current;
+        }
+        return null;
+      }),
+    );
+
+  const create: WorkspaceService["Service"]["create"] = ({
+    projectId,
+    setupThreadId,
+    baseRef,
+    checkout,
+  }) =>
     createLock.withPermits(1)(
       Effect.gen(function* () {
         const project = yield* loadProject(projectId);
+        if (checkout?.type === "branch") {
+          const holder = yield* checkedOutAt(project.workspaceRoot, checkout.branch);
+          if (holder !== null) {
+            return yield* workspaceError(
+              "invalid-state",
+              `${checkout.branch} is already checked out at ${holder}.`,
+            );
+          }
+        }
         const settings = yield* settingsService.getSettings.pipe(Effect.orElseSucceed(() => null));
         // The folder keeps the bare city; the branch follows the user's naming prefix.
         const branchFor = (city: string) =>
@@ -530,8 +669,13 @@ export const make = Effect.gen(function* () {
           projectId,
           name,
           worktreePath: path.join(parent, name),
-          branch: branchFor(name),
-          baseRef: null,
+          branch:
+            checkout?.type === "branch"
+              ? checkout.branch
+              : checkout?.type === "pullRequest"
+                ? null
+                : branchFor(name),
+          baseRef: baseRef ?? null,
           status: "creating",
           pendingOperation: "create",
           error: null,
@@ -541,6 +685,13 @@ export const make = Effect.gen(function* () {
               ? null
               : { threadId: setupThreadId, terminalId: SETUP_TERMINAL_ID },
           runningScripts: [],
+          setupPending: true,
+          checkout:
+            checkout === undefined
+              ? { type: "new", startFromOrigin: true }
+              : checkout.type === "branch"
+                ? { type: "branch" }
+                : checkout,
           createdAt: yield* nowIso,
           archivedAt: null,
         };
@@ -802,6 +953,95 @@ export const make = Effect.gen(function* () {
     { bufferSize: 1, strategy: "sliding" },
   );
 
+  const runGh = Effect.fn("WorkspaceService.runGh")(function* (
+    projectId: ProjectId,
+    args: ReadonlyArray<string>,
+  ) {
+    const project = yield* loadProject(projectId);
+    const output = yield* processRunner
+      .run({ command: "gh", args, cwd: project.workspaceRoot, timeout: "20 seconds" })
+      .pipe(
+        Effect.mapError(() =>
+          workspaceError(
+            "github-cli-unavailable",
+            "This needs the GitHub CLI. Install gh, then run `gh auth login`.",
+          ),
+        ),
+      );
+    if (output.code !== 0) {
+      const reason = output.stderr.trim().split("\n")[0] ?? "";
+      return yield* workspaceError(
+        "github-cli-unavailable",
+        reason.length > 0 ? reason : "The GitHub CLI failed.",
+      );
+    }
+    return output.stdout;
+  });
+
+  const unreadableGhOutput = () =>
+    workspaceError(
+      "github-cli-unavailable",
+      "The GitHub CLI returned output T3 Code could not read.",
+    );
+
+  const listIssues: WorkspaceService["Service"]["listIssues"] = Effect.fn(
+    "WorkspaceService.listIssues",
+  )(function* ({ projectId, query }) {
+    const stdout = yield* runGh(projectId, [
+      "issue",
+      "list",
+      "--state",
+      "open",
+      "--limit",
+      String(GH_LIST_LIMIT),
+      "--json",
+      "number,title,url",
+      ...(query === undefined ? [] : ["--search", query]),
+    ]);
+    return yield* decodeIssues(stdout).pipe(Effect.mapError(unreadableGhOutput));
+  });
+
+  const listPullRequests: WorkspaceService["Service"]["listPullRequests"] = Effect.fn(
+    "WorkspaceService.listPullRequests",
+  )(function* ({ projectId, query }) {
+    const stdout = yield* runGh(projectId, [
+      "pr",
+      "list",
+      "--state",
+      "open",
+      "--limit",
+      String(GH_LIST_LIMIT),
+      "--json",
+      "number,title,url,headRefName,baseRefName",
+      ...(query === undefined ? [] : ["--search", query]),
+    ]);
+    const pullRequests = yield* decodeGhPullRequests(stdout).pipe(
+      Effect.mapError(unreadableGhOutput),
+    );
+    return pullRequests.map(({ headRefName, baseRefName, ...rest }) => ({
+      ...rest,
+      headBranch: headRefName,
+      baseBranch: baseRefName,
+    }));
+  });
+
+  const readIssue: WorkspaceService["Service"]["readIssue"] = Effect.fn(
+    "WorkspaceService.readIssue",
+  )(function* ({ projectId, number }) {
+    const stdout = yield* runGh(projectId, [
+      "issue",
+      "view",
+      String(number),
+      "--json",
+      "number,title,url,body",
+    ]);
+    const issue = yield* decodeIssue(stdout).pipe(Effect.mapError(unreadableGhOutput));
+    const body = issue.body ?? "";
+    return body.length > ISSUE_BODY_MAX_CHARS
+      ? { ...issue, body: `${body.slice(0, ISSUE_BODY_MAX_CHARS)}\n\n[Truncated]` }
+      : issue;
+  });
+
   const setProjectScripts: WorkspaceService["Service"]["setProjectScripts"] = Effect.fn(
     "WorkspaceService.setProjectScripts",
   )(function* (scripts: ProjectWorkspaceScripts) {
@@ -926,6 +1166,9 @@ export const make = Effect.gen(function* () {
   return WorkspaceService.of({
     runProjectScript,
     setProjectScripts,
+    listIssues,
+    listPullRequests,
+    readIssue,
     create,
     archive,
     unarchive,

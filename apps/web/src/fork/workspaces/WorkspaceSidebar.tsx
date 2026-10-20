@@ -30,7 +30,7 @@ import {
 } from "../../logicalProject";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useScratchProject } from "../../hooks/useScratchProject";
-import { cn } from "../../lib/utils";
+import { cn, isMacPlatform } from "../../lib/utils";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -252,8 +252,19 @@ function ProjectGroup({
           size="icon-xs"
           variant="ghost-muted"
           aria-label={`New workspace in ${project.title}`}
-          title="New workspace"
-          onClick={() => void createWorkspace(project.environmentId, project.id)}
+          title={`New workspace (${isMacPlatform(navigator.platform) ? "⌘" : "Ctrl"}-click to skip options)`}
+          onClick={(event) => {
+            // Mod-click skips the dialog, the same shortcut upstream's sidebar uses.
+            const quick = isMacPlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
+            if (quick) {
+              void createWorkspace(project.environmentId, project.id);
+            } else {
+              openNewWorkspaceDialog({
+                environmentId: project.environmentId,
+                projectId: project.id,
+              });
+            }
+          }}
         >
           <PlusIcon />
         </Button>

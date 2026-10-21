@@ -2,6 +2,7 @@ import type {
   EnvironmentId,
   ModelSelection,
   ProjectId,
+  ProviderInteractionMode,
   RuntimeMode,
   WorkspaceCommand,
   WorkspaceIssue,
@@ -9,10 +10,11 @@ import type {
 import { deriveLocalBranchNameFromRemoteRef } from "@t3tools/shared/git";
 import { createModelSelection } from "@t3tools/shared/model";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { ChevronDownIcon, FolderPlusIcon } from "lucide-react";
+import { BotIcon, ChevronDownIcon, FolderPlusIcon, PencilRulerIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { openCommandPalette } from "../../commandPaletteBus";
+import { resolveComposerInteractionMode } from "../../components/ChatView.logic";
 import type { ComposerPromptEditorHandle } from "../../components/ComposerPromptEditor";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { ProviderModelPicker } from "../../components/chat/ProviderModelPicker";
@@ -29,6 +31,7 @@ import {
   SelectValue,
 } from "../../components/ui/select";
 import { Spinner } from "../../components/ui/spinner";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
@@ -269,6 +272,19 @@ function ProjectComposer({
   const runtimeMode = modes.includes(requestedMode) ? requestedMode : (modes[0] ?? requestedMode);
   const ModeIcon = runtimeModeConfig[runtimeMode].icon;
 
+  // The chat's gate: the legacy plan mode setting, and a provider that supports it.
+  const [requestedInteractionMode, setInteractionMode] =
+    useState<ProviderInteractionMode>("default");
+  const { enabled: planModeEnabled, interactionMode } = resolveComposerInteractionMode({
+    planModeEnabled: settings.planModeEnabled,
+    provider: activeEntry?.snapshot,
+    interactionMode: requestedInteractionMode,
+  });
+  const interactionModeTooltip =
+    interactionMode === "plan"
+      ? "Plan mode — click to return to normal build mode"
+      : "Default mode — click to enter plan mode";
+
   const submit = async () => {
     if (creating || loadingIssue) return;
     const baseIsRemote = branches.refs.find((ref) => ref.name === baseRef)?.isRemote === true;
@@ -290,6 +306,7 @@ function ProjectComposer({
       ),
       ...(selection ? { modelSelection: selection } : {}),
       runtimeMode,
+      interactionMode,
     });
     setCreating(false);
     if (workspace !== null) onCreated();
@@ -337,6 +354,9 @@ function ProjectComposer({
           sendShortcut={settings.sendShortcut}
           value={prompt}
           reviewComments={reviewComments}
+          planModeEnabled={planModeEnabled}
+          interactionMode={interactionMode}
+          onInteractionModeChange={setInteractionMode}
           onReviewCommentAdd={(comment) =>
             setReviewComments((current) => [
               ...current.filter((entry) => entry.id !== comment.id),
@@ -411,6 +431,27 @@ function ProjectComposer({
             })}
           </SelectPopup>
         </Select>
+        {planModeEnabled ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  aria-pressed={interactionMode === "plan"}
+                  aria-label={interactionModeTooltip}
+                  onClick={() =>
+                    setInteractionMode(interactionMode === "plan" ? "default" : "plan")
+                  }
+                />
+              }
+            >
+              {interactionMode === "plan" ? <PencilRulerIcon /> : <BotIcon />}
+              {interactionMode === "plan" ? "Plan" : "Build"}
+            </TooltipTrigger>
+            <TooltipPopup side="top">{interactionModeTooltip}</TooltipPopup>
+          </Tooltip>
+        ) : null}
         <button
           type="button"
           aria-label={prompt.trim().length > 0 ? "Create workspace and send" : "Create workspace"}

@@ -3,6 +3,7 @@ import type {
   EnvironmentId,
   ModelSelection,
   ProjectId,
+  ProviderInteractionMode,
   RuntimeMode,
   ThreadId,
   Workspace,
@@ -131,6 +132,7 @@ export interface WorkspaceCreateOptions {
   readonly reviewComments?: ReadonlyArray<ReviewCommentContext>;
   readonly modelSelection?: ModelSelection;
   readonly runtimeMode?: RuntimeMode;
+  readonly interactionMode?: ProviderInteractionMode;
 }
 
 /**
@@ -166,6 +168,9 @@ export function useCreateWorkspace() {
       }
       if (options.runtimeMode !== undefined) {
         drafts.setRuntimeMode(opened.draftId, options.runtimeMode);
+      }
+      if (options.interactionMode !== undefined) {
+        drafts.setInteractionMode(opened.draftId, options.interactionMode);
       }
       const prompt = options.prompt?.trim() ?? "";
       if (prompt.length > 0) {

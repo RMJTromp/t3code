@@ -238,8 +238,10 @@ export const make = Effect.gen(function* () {
         : Effect.fail(workspaceError("not-found", "This workspace no longer exists."));
     });
 
+  // Turn tracking writes outside the per-workspace locks, so every read-modify-write takes turns.
+  const writeLock = yield* Semaphore.make(1);
   const update = (workspaceId: WorkspaceId, change: (record: StoredWorkspace) => StoredWorkspace) =>
-    Effect.flatMap(get(workspaceId), (record) => put(change(record)));
+    writeLock.withPermits(1)(Effect.flatMap(get(workspaceId), (record) => put(change(record))));
 
   const setStatus = (
     workspaceId: WorkspaceId,
@@ -449,6 +451,36 @@ export const make = Effect.gen(function* () {
         workspaceError("invalid-state", "Could not read the workspace's chats."),
       ),
     );
+
+  const isWorkspaceChat = (
+    workspace: Workspace,
+    thread: {
+      readonly projectId: ProjectId;
+      readonly worktreePath: string | null;
+      readonly lineage: { readonly relationshipToParent: string | null };
+    },
+  ) =>
+    thread.lineage.relationshipToParent !== "subagent" &&
+    thread.projectId === workspace.projectId &&
+    samePath(thread.worktreePath, workspace.worktreePath);
+
+  /** Kept on the workspace so archiving or deleting the chat does not drop it in the sidebar. */
+  const recordTurn = Effect.fn("WorkspaceService.recordTurn")(function* (
+    threadId: ThreadId,
+    at: string,
+  ) {
+    const shell = yield* threads.getThreadShell(threadId);
+    if (shell === null) return;
+    for (const { workspace } of Array.from(records.values())) {
+      if (workspace.status === "archived" || !isWorkspaceChat(workspace, shell)) continue;
+      if (workspace.lastTurnAt !== null && workspace.lastTurnAt >= at) continue;
+      yield* update(workspace.id, (record) =>
+        record.workspace.lastTurnAt !== null && record.workspace.lastTurnAt >= at
+          ? record
+          : { ...record, workspace: { ...record.workspace, lastTurnAt: at } },
+      );
+    }
+  });
 
   const changedFiles = (worktreePath: string) =>
     runGit(worktreePath, ["status", "--porcelain=v1", "--untracked-files=all"]).pipe(
@@ -695,6 +727,7 @@ export const make = Effect.gen(function* () {
                 : checkout,
           createdAt: yield* nowIso,
           archivedAt: null,
+          lastTurnAt: null,
         };
         yield* put({ workspace, archivedThreadIds: [], log: "" });
         yield* fork(workspace.id, "Creating the workspace", provision(workspace.id));
@@ -1163,6 +1196,55 @@ export const make = Effect.gen(function* () {
       yield* store.save({ ...record, workspace }).pipe(Effect.ignore);
     }
   }
+
+  // Chats that ran before turns were remembered on the workspace, archived ones included.
+  if (
+    Array.from(records.values()).some(
+      ({ workspace }) => workspace.status !== "archived" && workspace.lastTurnAt === null,
+    )
+  ) {
+    const shells = yield* Effect.forEach(["active", "archive"] as const, (location) =>
+      threads.getShellSnapshot({ location }).pipe(
+        Effect.map((snapshot) => snapshot.threads),
+        Effect.orElseSucceed(() => []),
+      ),
+    ).pipe(Effect.map((locations) => locations.flat()));
+    for (const record of records.values()) {
+      const { workspace } = record;
+      if (workspace.status === "archived" || workspace.lastTurnAt !== null) continue;
+      const lastTurnAt = shells
+        .filter((shell) => isWorkspaceChat(workspace, shell))
+        .map((shell) => shell.latestRunCompletedAt ?? shell.latestRunRequestedAt)
+        .filter((at) => at != null)
+        .map(DateTime.formatIso)
+        .reduce<string | null>(
+          (latest, at) => (latest === null || at > latest ? at : latest),
+          null,
+        );
+      if (lastTurnAt === null) continue;
+      const next = { ...record, workspace: { ...workspace, lastTurnAt } };
+      records.set(workspace.id, next);
+      yield* store.save(next).pipe(Effect.ignore);
+    }
+  }
+
+  yield* threads.streamDomainEvents.pipe(
+    Stream.runForEach((event) => {
+      if (event.type !== "run.created" && event.type !== "run.updated") return Effect.void;
+      const { requestedAt, completedAt } = event.payload;
+      // A start counts when the run is created, an end once it completes; nothing in between.
+      if (event.type === "run.updated" && completedAt === null) return Effect.void;
+      return recordTurn(event.threadId, DateTime.formatIso(completedAt ?? requestedAt)).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("workspace turn tracking skipped", { threadId: event.threadId, cause }),
+        ),
+      );
+    }),
+    Effect.catchCause((cause) =>
+      Effect.logWarning("workspace turn tracking stream failed", { cause }),
+    ),
+    Effect.forkIn(backgroundScope),
+  );
 
   return WorkspaceService.of({
     runProjectScript,

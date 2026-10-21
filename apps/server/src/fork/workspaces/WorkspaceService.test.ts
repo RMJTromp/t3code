@@ -11,13 +11,16 @@ import {
   ProjectId,
   ThreadId,
   WorkspaceId,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ServerCommand,
   type Workspace,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../config.ts";
@@ -157,6 +160,11 @@ interface Fixture {
   }>;
   readonly dispatched: Array<OrchestrationV2ServerCommand>;
   readonly terminals: Array<string>;
+  /** Shells by thread id; archived ones are only listed in the archive snapshot. */
+  readonly shells: Map<string, { readonly shell: unknown; readonly archived: boolean }>;
+  /** Queues into `pendingEvents` until the service subscribes, so start-up timing loses nothing. */
+  emit: (event: OrchestrationV2DomainEvent) => void;
+  readonly pendingEvents: Array<OrchestrationV2DomainEvent>;
 }
 
 function makeFixture(): Fixture {
@@ -176,12 +184,18 @@ function makeFixture(): Fixture {
   NodeFS.writeFileSync(NodePath.join(root, ".gitignore"), "setup.log\narchive.log\n");
   git(root, "add", ".");
   git(root, "commit", "-m", "init");
+  const pending: Array<OrchestrationV2DomainEvent> = [];
   return {
     root,
     projectId: ProjectId.make("project-1"),
     threads: [],
     dispatched: [],
     terminals: [],
+    shells: new Map(),
+    emit: (event) => {
+      pending.push(event);
+    },
+    pendingEvents: pending,
   };
 }
 
@@ -245,6 +259,25 @@ function servicesLayer(fixture: Fixture) {
     }),
     Layer.mock(ThreadManagementService.ThreadManagementService)({
       listProjectThreads: () => Effect.sync(() => fixture.threads as never),
+      getShellSnapshot: (options) =>
+        Effect.sync(
+          () =>
+            ({
+              threads: Array.from(fixture.shells.values())
+                .filter((entry) => entry.archived === (options?.location === "archive"))
+                .map((entry) => entry.shell),
+            }) as never,
+        ),
+      getThreadShell: (threadId) =>
+        Effect.sync(() => (fixture.shells.get(threadId)?.shell ?? null) as never),
+      streamDomainEvents: Stream.callback<OrchestrationV2DomainEvent>((mailbox) =>
+        Effect.sync(() => {
+          for (const event of fixture.pendingEvents.splice(0)) Queue.offerUnsafe(mailbox, event);
+          fixture.emit = (event) => {
+            Queue.offerUnsafe(mailbox, event);
+          };
+        }),
+      ),
       dispatch: (command) =>
         Effect.sync(() => {
           fixture.dispatched.push(command);
@@ -636,6 +669,7 @@ describe("WorkspaceService", () => {
         checkout: { type: "new", startFromOrigin: true },
         createdAt: "2026-10-19T00:00:00.000Z",
         archivedAt: null,
+        lastTurnAt: null,
       };
       yield* store.save({ workspace: base, archivedThreadIds: [], log: "" });
       yield* store.save({
@@ -656,6 +690,103 @@ describe("WorkspaceService", () => {
       assert.equal(byId.get(WorkspaceId.make("ws-creating"))?.pendingOperation, "create");
       // Its folder is already gone, so the archive had finished.
       assert.equal(byId.get(WorkspaceId.make("ws-archiving"))?.status, "archived");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(WorkspaceStore.layer.pipe(Layer.provideMerge(servicesLayer(fixture)))),
+    );
+  });
+
+  it.effect("remembers its chats' latest turn start or end, archived chats included", () => {
+    const fixture = makeFixture();
+    const worktreePath = NodePath.join(fixture.root, "oslo");
+    const at = (hour: number) => `2026-10-19T0${hour}:00:00.000Z`;
+    const shell = (
+      id: string,
+      completedHour: number | null,
+      options: { readonly subagent?: boolean; readonly archived?: boolean } = {},
+    ) =>
+      fixture.shells.set(id, {
+        archived: options.archived ?? false,
+        shell: {
+          id,
+          projectId: fixture.projectId,
+          worktreePath: `${worktreePath}/`,
+          lineage: {
+            parentThreadId: options.subagent ? "chat-live" : null,
+            relationshipToParent: options.subagent ? "subagent" : null,
+          },
+          latestRunRequestedAt: null,
+          latestRunCompletedAt:
+            completedHour === null ? null : DateTime.makeUnsafe(at(completedHour)),
+        },
+      });
+    const run = (
+      type: "run.created" | "run.updated",
+      threadId: string,
+      requestedHour: number,
+      completedHour: number | null,
+    ) =>
+      fixture.emit({
+        type,
+        threadId: ThreadId.make(threadId),
+        payload: {
+          requestedAt: DateTime.makeUnsafe(at(requestedHour)),
+          completedAt: completedHour === null ? null : DateTime.makeUnsafe(at(completedHour)),
+        },
+      } as never);
+    const turnAt = (service: WorkspaceService.WorkspaceService["Service"], hour: number) =>
+      awaitWorkspace(
+        service,
+        (workspace) => workspace.lastTurnAt !== null && workspace.lastTurnAt >= at(hour),
+      ).pipe(Effect.map((workspace) => workspace.lastTurnAt));
+
+    return Effect.gen(function* () {
+      const store = yield* WorkspaceStore.WorkspaceStore;
+      yield* store.save({
+        workspace: {
+          id: WorkspaceId.make("ws-oslo"),
+          projectId: fixture.projectId,
+          name: "oslo",
+          worktreePath,
+          branch: "oslo",
+          baseRef: "main",
+          status: "ready",
+          pendingOperation: null,
+          error: null,
+          lastScript: null,
+          setupTerminal: null,
+          runningScripts: [],
+          setupPending: false,
+          checkout: { type: "new", startFromOrigin: true },
+          createdAt: at(0),
+          archivedAt: null,
+          lastTurnAt: null,
+        },
+        archivedThreadIds: [],
+        log: "",
+      });
+      shell("chat-live", 1);
+      shell("chat-archived", 3, { archived: true });
+      shell("chat-subagent", 9, { subagent: true });
+
+      const service = yield* WorkspaceService.make;
+      const [backfilled] = yield* service.list;
+      assert.equal(backfilled?.lastTurnAt, at(3));
+
+      // Mid-run updates and subagents never move it; a start and an end do.
+      run("run.updated", "chat-live", 4, null);
+      run("run.updated", "chat-subagent", 8, 9);
+      run("run.created", "chat-live", 5, null);
+      assert.equal(yield* turnAt(service, 5), at(5));
+      run("run.updated", "chat-live", 5, 6);
+      assert.equal(yield* turnAt(service, 6), at(6));
+
+      // A deleted chat's turn stays, and an older one cannot pull it back.
+      fixture.shells.delete("chat-live");
+      shell("chat-new", null);
+      run("run.updated", "chat-new", 2, 2);
+      run("run.created", "chat-new", 7, null);
+      assert.equal(yield* turnAt(service, 7), at(7));
     }).pipe(
       Effect.scoped,
       Effect.provide(WorkspaceStore.layer.pipe(Layer.provideMerge(servicesLayer(fixture)))),

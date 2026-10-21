@@ -112,6 +112,8 @@ export const Workspace = Schema.Struct({
   ),
   createdAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime),
+  /** Newest turn start or end in its chats, kept after those chats are archived or deleted. */
+  lastTurnAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
 });
 export type Workspace = typeof Workspace.Type;
 

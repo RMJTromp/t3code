@@ -90,6 +90,8 @@ interface WorkspaceDraftCandidate {
 
 export interface WorkspaceDraftTab<K extends string> {
   readonly draftId: K;
+  readonly threadId: string;
+  readonly createdAt: string;
   readonly hasContent: boolean;
 }
 
@@ -115,8 +117,51 @@ export function draftsForWorkspace<K extends string>(
         !options.sentThreadIds.has(session.threadId),
     )
     .toSorted(([, left], [, right]) => left.createdAt.localeCompare(right.createdAt))
-    .map(([draftId]) => ({ draftId, hasContent: options.hasContent(draftId) }))
+    .map(([draftId, session]) => ({
+      draftId,
+      threadId: session.threadId,
+      createdAt: session.createdAt,
+      hasContent: options.hasContent(draftId),
+    }))
     .filter((draft) => draft.hasContent || draft.draftId === options.activeDraftId);
+}
+
+export type WorkspaceTab<T, K extends string> =
+  | { readonly kind: "thread"; readonly key: string; readonly at: string; readonly thread: T }
+  | {
+      readonly kind: "draft";
+      readonly key: K;
+      readonly at: string;
+      readonly draft: WorkspaceDraftTab<K>;
+    };
+
+/**
+ * Chats and drafts in the order their tabs opened, never by activity. A sent
+ * chat keeps its draft's place when `openedAt` remembers it.
+ */
+export function orderWorkspaceTabs<
+  T extends { readonly id: string; readonly createdAt: string },
+  K extends string,
+>(
+  members: ReadonlyArray<T>,
+  drafts: ReadonlyArray<WorkspaceDraftTab<K>>,
+  openedAt: Readonly<Record<string, string>>,
+): ReadonlyArray<WorkspaceTab<T, K>> {
+  const tabs: Array<WorkspaceTab<T, K>> = [
+    ...members.map((thread) => ({
+      kind: "thread" as const,
+      key: thread.id,
+      at: openedAt[thread.id] ?? thread.createdAt,
+      thread,
+    })),
+    ...drafts.map((draft) => ({
+      kind: "draft" as const,
+      key: draft.draftId,
+      at: draft.createdAt,
+      draft,
+    })),
+  ];
+  return tabs.toSorted((left, right) => left.at.localeCompare(right.at));
 }
 
 /** Project threads that predate workspaces or came from clients without them. */
@@ -205,15 +250,23 @@ export function threadLastTurnAt(thread: ThreadRunTimes): string {
   return thread.latestRun?.completedAt ?? thread.latestRun?.requestedAt ?? thread.createdAt;
 }
 
-/** A workspace's newest chat hand-back; a workspace without chats dates from its creation. */
+/**
+ * A workspace's newest turn start or end. The server remembers it past archived
+ * and deleted chats; live chats still count so a reply moves it at once. A
+ * workspace that never ran a turn dates from its creation.
+ */
 export function workspaceLastActivity(
-  workspace: Pick<Workspace, "createdAt">,
+  workspace: Pick<Workspace, "createdAt" | "lastTurnAt">,
   members: ReadonlyArray<ThreadRunTimes>,
 ): string {
+  const remembered =
+    workspace.lastTurnAt !== null && workspace.lastTurnAt > workspace.createdAt
+      ? workspace.lastTurnAt
+      : workspace.createdAt;
   return members.reduce((latest, thread) => {
     const at = threadLastTurnAt(thread);
     return at > latest ? at : latest;
-  }, workspace.createdAt);
+  }, remembered);
 }
 
 /** "3h ago" → "3h", "just now" → "now", as upstream's sidebar shortens it. */

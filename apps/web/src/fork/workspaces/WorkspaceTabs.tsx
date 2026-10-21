@@ -38,12 +38,14 @@ import {
   draftsForWorkspace,
   isUserChat,
   neighbourAfterClose,
+  orderWorkspaceTabs,
   owningUserChatId,
   sameWorkspacePath,
   threadsForWorkspace,
   workspaceAcceptsChats,
 } from "./logic";
 import { useWorkspaceForPath } from "./state";
+import { useWorkspaceTabOrder } from "./tabOrder";
 import { useOpenWorkspace } from "./useOpenWorkspace";
 import { useThreadAttention } from "./useThreadAttention";
 
@@ -116,13 +118,27 @@ function WorkspaceTabStrip({
       sentThreadIds,
       hasContent: (draftId) => composerDraftHasUserContent(state.draftsByThreadKey[draftId]),
     })
-      .map((draft) => `${draft.hasContent ? 1 : 0}${draft.draftId}`)
+      .map((draft) =>
+        [draft.hasContent ? 1 : 0, draft.draftId, draft.threadId, draft.createdAt].join("\t"),
+      )
       .join("\n"),
   );
-  const drafts = (draftTabsKey.length === 0 ? [] : draftTabsKey.split("\n")).map((entry) => ({
-    draftId: DraftId.make(entry.slice(1)),
-    hasContent: entry[0] === "1",
-  }));
+  const drafts = (draftTabsKey.length === 0 ? [] : draftTabsKey.split("\n")).map((entry) => {
+    const [hasContent, draftId, threadId, createdAt] = entry.split("\t") as [
+      string,
+      string,
+      string,
+      string,
+    ];
+    return { draftId: DraftId.make(draftId), threadId, createdAt, hasContent: hasContent === "1" };
+  });
+  // Remembered while still a draft, so the chat keeps this place once sent.
+  const openedAt = useWorkspaceTabOrder((state) => state.openedAt);
+  const rememberOpened = useWorkspaceTabOrder((state) => state.remember);
+  useEffect(() => {
+    rememberOpened(drafts.map((draft) => [draft.threadId, draft.createdAt] as const));
+  }, [drafts, rememberOpened]);
+  const tabs = orderWorkspaceTabs(members, drafts, openedAt);
   const [renamingId, setRenamingId] = useState<ThreadId | null>(null);
 
   const remember = useWorkspaceLastLocation((state) => state.remember);
@@ -168,10 +184,7 @@ function WorkspaceTabStrip({
   }, [environmentId, scriptTerminals, viewedThreadId]);
 
   const draftIds = new Set<string>(drafts.map((draft) => draft.draftId));
-  const tabKeys: ReadonlyArray<string> = [
-    ...members.map((thread) => thread.id),
-    ...drafts.map((draft) => draft.draftId),
-  ];
+  const tabKeys: ReadonlyArray<string> = tabs.map((tab) => tab.key);
   const activeKey = activeTabId ?? activeDraftId;
   const selectKey = (key: string) => {
     if (draftIds.has(key)) void openDraft(DraftId.make(key));
@@ -273,7 +286,24 @@ function WorkspaceTabStrip({
           onKeyDown={onTabKeyDown}
           className="flex h-full w-max min-w-full items-center gap-1"
         >
-          {members.map((thread) => {
+          {tabs.map((tab) => {
+            if (tab.kind === "draft") {
+              const { draft } = tab;
+              return (
+                <ChatTab
+                  key={draft.draftId}
+                  title={DRAFT_TITLE}
+                  closeLabel="Discard draft"
+                  working={false}
+                  marker={draft.hasContent ? "draft" : null}
+                  active={draft.draftId === activeDraftId}
+                  renaming={false}
+                  onSelect={() => void openDraft(draft.draftId)}
+                  onClose={() => closeDraft(draft.draftId)}
+                />
+              );
+            }
+            const { thread } = tab;
             const attention = attentionOf(thread);
             return (
               <ChatTab
@@ -290,19 +320,6 @@ function WorkspaceTabStrip({
               />
             );
           })}
-          {drafts.map((draft) => (
-            <ChatTab
-              key={draft.draftId}
-              title={DRAFT_TITLE}
-              closeLabel="Discard draft"
-              working={false}
-              marker={draft.hasContent ? "draft" : null}
-              active={draft.draftId === activeDraftId}
-              renaming={false}
-              onSelect={() => void openDraft(draft.draftId)}
-              onClose={() => closeDraft(draft.draftId)}
-            />
-          ))}
           {/* Always a fresh draft: unsent ones keep their own tabs. */}
           <button
             type="button"

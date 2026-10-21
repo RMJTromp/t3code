@@ -47,8 +47,8 @@ opens it in the workspace you are viewing, or asks you to create one.
 
 ## Chats
 
-Open a workspace from the sidebar to see its chats as tabs above the conversation. **+** starts
-another chat in the same worktree. Hover a tab and click its **x** to close the chat; the history
+Open a workspace from the sidebar to see its chats as tabs above the conversation, in the order
+you opened them. **+** starts another chat in the same worktree. Hover a tab and click its **x** to close the chat; the history
 button at the right of the tabs reopens closed chats. Right-click a tab to mark it unread, rename
 it, close it, or close the others.
 

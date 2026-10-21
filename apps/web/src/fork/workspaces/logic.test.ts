@@ -9,6 +9,7 @@ import {
   matchHashReferences,
   workspaceLastActivity,
   neighbourAfterClose,
+  orderWorkspaceTabs,
   owningUserChatId,
   routeNewThread,
   threadsForWorkspace,
@@ -36,6 +37,7 @@ function workspace(overrides: Partial<Workspace> = {}): Workspace {
     checkout: { type: "new", startFromOrigin: true },
     createdAt: "2026-10-19T00:00:00.000Z",
     archivedAt: null,
+    lastTurnAt: null,
     ...overrides,
   };
 }
@@ -94,6 +96,26 @@ describe("threadsForWorkspace", () => {
   });
 });
 
+describe("orderWorkspaceTabs", () => {
+  const chat = (id: string, createdAt: string) => ({ id, createdAt });
+  const draft = (draftId: string, createdAt: string) => ({
+    draftId,
+    threadId: `t-${draftId}`,
+    createdAt,
+    hasContent: true,
+  });
+
+  it("keeps tabs in the order they opened, a sent draft included", () => {
+    // Opened as drafts at 1h and 2h; the 2h one was sent first, at 3h.
+    const tabs = orderWorkspaceTabs(
+      [chat("t-later", "2026-10-19T03:00:00.000Z"), chat("old", "2026-10-19T00:00:00.000Z")],
+      [draft("first", "2026-10-19T01:00:00.000Z"), draft("newest", "2026-10-19T04:00:00.000Z")],
+      { "t-later": "2026-10-19T02:00:00.000Z" },
+    );
+    expect(tabs.map((tab) => tab.key)).toEqual(["old", "first", "t-later", "newest"]);
+  });
+});
+
 describe("draftsForWorkspace", () => {
   const draft = (
     threadId: string,
@@ -125,8 +147,18 @@ describe("draftsForWorkspace", () => {
 
   it("lists the workspace's unsent drafts that hold text, oldest first", () => {
     expect(draftsForWorkspace(sessions, workspace(), options(null))).toEqual([
-      { draftId: "first", hasContent: true },
-      { draftId: "second", hasContent: true },
+      {
+        draftId: "first",
+        threadId: "t-first",
+        createdAt: "2026-10-19T01:00:00.000Z",
+        hasContent: true,
+      },
+      {
+        draftId: "second",
+        threadId: "t-second",
+        createdAt: "2026-10-19T02:00:00.000Z",
+        hasContent: true,
+      },
     ]);
   });
 
@@ -195,7 +227,7 @@ describe("neighbourAfterClose", () => {
 
 describe("workspace activity", () => {
   it("uses the newest turn end, else the creation time", () => {
-    const created = { createdAt: "2026-10-19T00:00:00.000Z" };
+    const created = { createdAt: "2026-10-19T00:00:00.000Z", lastTurnAt: null };
     const run = (requestedAt: string, completedAt: string | null) => ({
       createdAt: created.createdAt,
       latestRun: { requestedAt, completedAt },
@@ -210,7 +242,7 @@ describe("workspace activity", () => {
   });
 
   it("holds a working chat at the time its turn was asked for", () => {
-    const created = { createdAt: "2026-10-19T00:00:00.000Z" };
+    const created = { createdAt: "2026-10-19T00:00:00.000Z", lastTurnAt: null };
     expect(
       workspaceLastActivity(created, [
         {
@@ -220,6 +252,24 @@ describe("workspace activity", () => {
         { createdAt: created.createdAt, latestRun: null },
       ]),
     ).toBe("2026-10-19T03:00:00.000Z");
+  });
+
+  it("keeps the remembered turn of an archived or deleted chat", () => {
+    const remembered = {
+      createdAt: "2026-10-19T00:00:00.000Z",
+      lastTurnAt: "2026-10-19T06:00:00.000Z",
+    };
+    const live = (completedAt: string) => ({
+      createdAt: remembered.createdAt,
+      latestRun: { requestedAt: remembered.createdAt, completedAt },
+    });
+    expect(workspaceLastActivity(remembered, [])).toBe("2026-10-19T06:00:00.000Z");
+    expect(workspaceLastActivity(remembered, [live("2026-10-19T02:00:00.000Z")])).toBe(
+      "2026-10-19T06:00:00.000Z",
+    );
+    expect(workspaceLastActivity(remembered, [live("2026-10-19T07:00:00.000Z")])).toBe(
+      "2026-10-19T07:00:00.000Z",
+    );
   });
 
   it("drops the ago suffix", () => {

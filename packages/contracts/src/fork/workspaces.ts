@@ -75,7 +75,7 @@ export type ProjectWorkspaceScripts = typeof ProjectWorkspaceScripts.Type;
 
 /** How the worktree is made; kept on the workspace so a retry repeats it. */
 export const WorkspaceCheckout = Schema.Union([
-  /** A new city-named branch cut from `baseRef`. */
+  /** A new branch cut from `baseRef`, named after its city until the first message names it. */
   Schema.Struct({ type: Schema.Literal("new"), startFromOrigin: Schema.Boolean }),
   /** The existing `branch`, local or on origin. */
   Schema.Struct({ type: Schema.Literal("branch") }),

@@ -10,6 +10,8 @@ import * as Effect from "effect/Effect";
 export interface WorkspaceOwner {
   readonly workspaceId: WorkspaceId;
   readonly status: WorkspaceStatus;
+  /** The placeholder city branch, until the first message names it. */
+  readonly awaitingBranchName: string | null;
 }
 
 export interface WorkspaceOwnershipRegistry {
@@ -53,6 +55,16 @@ export const forkWorkspaceOwnsPath = (path: string): Effect.Effect<boolean> =>
   Effect.map(Effect.service(WorkspaceOwnership), (registry) => {
     const owner = registry.ownerOf(path);
     return owner !== null && owner.status !== "archived";
+  });
+
+/** Lets upstream's first-message branch rename treat a workspace's city branch as temporary. */
+export const forkWorkspaceAwaitsBranchName = (
+  path: string,
+  branch: string,
+): Effect.Effect<boolean> =>
+  Effect.map(Effect.service(WorkspaceOwnership), (registry) => {
+    const owner = registry.ownerOf(path);
+    return owner !== null && owner.status !== "archived" && owner.awaitingBranchName === branch;
   });
 
 /** Only the workspace's own archive may remove its checkout. */

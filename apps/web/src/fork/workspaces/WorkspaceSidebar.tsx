@@ -18,6 +18,9 @@ import {
 
 import { openCommandPalette } from "../../commandPaletteBus";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
+import { PullRequestStateGlyph } from "../../components/pullRequest/pullRequestPresentation";
+import { useSidebarRowSubscriptionLease } from "../../components/Sidebar.logic";
+import { useLinkedThreadPullRequest } from "../../components/ThreadStatusIndicators";
 import { SidebarChromeFooter, SidebarChromeHeader } from "../../components/sidebar/SidebarChrome";
 import { Button } from "../../components/ui/button";
 import { SidebarContent, SidebarGroup } from "../../components/ui/sidebar";
@@ -363,8 +366,22 @@ function WorkspaceRow({
   const target = { environmentId, workspaceId: workspace.id };
   const runningScript = workspace.runningScripts[0];
   const lastActivity = workspaceLastActivity(workspace, members);
+  // Every chat shares the workspace's branch, so any one that knows its PR speaks for all.
+  const prSource = members.find(
+    (thread) => thread.pullRequests.length > 0 || thread.branchPullRequest != null,
+  );
+  const { leaseLiveStatus, rowRef } = useSidebarRowSubscriptionLease(isActive);
+  const pr =
+    useLinkedThreadPullRequest(
+      environmentId,
+      prSource?.linkedPullRequest,
+      leaseLiveStatus,
+      prSource?.pullRequests,
+      prSource?.branchPullRequest,
+    )?.pr ?? null;
   return (
     <li
+      ref={rowRef}
       className={cn(
         "group/workspace flex items-center gap-1 rounded-md pr-1 hover:bg-sidebar-row-hover",
         isActive && "bg-sidebar-row-active",
@@ -377,6 +394,12 @@ function WorkspaceRow({
       >
         {working ? (
           <BrailleSpinner className="text-xs" />
+        ) : pr ? (
+          <PullRequestStateGlyph
+            state={pr.state}
+            isDraft={pr.isDraft === true}
+            className="size-3.5"
+          />
         ) : (
           <GitBranchIcon className="size-3.5 shrink-0 text-muted-foreground" />
         )}

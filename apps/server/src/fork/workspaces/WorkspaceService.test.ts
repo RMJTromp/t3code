@@ -34,6 +34,7 @@ import * as TerminalManager from "../../terminal/Manager.ts";
 import { pickCityName } from "./cityNames.ts";
 import {
   forkGuardWorktreeRemoval,
+  forkWorkspaceAwaitsBranchName,
   forkWorkspaceOwnsPath,
   makeWorkspaceOwnershipRegistry,
   WorkspaceOwnership,
@@ -67,6 +68,7 @@ describe("WorkspaceOwnership", () => {
       registry.set(owned, ["/tmp/link/oslo/", "/private/tmp/link/oslo"], {
         workspaceId: owned,
         status: "ready",
+        awaitingBranchName: null,
       });
       const run = <A, E>(effect: Effect.Effect<A, E>) =>
         effect.pipe(Effect.provideService(WorkspaceOwnership, registry));
@@ -78,7 +80,11 @@ describe("WorkspaceOwnership", () => {
       ).pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(blocked));
 
-      registry.set(owned, ["/tmp/link/oslo"], { workspaceId: owned, status: "archiving" });
+      registry.set(owned, ["/tmp/link/oslo"], {
+        workspaceId: owned,
+        status: "archiving",
+        awaitingBranchName: null,
+      });
       yield* run(forkGuardWorktreeRemoval({ cwd: "/repo", path: "/tmp/link/oslo" }));
       // The old real-path spelling no longer maps to anything once re-registered.
       assert.isFalse(yield* run(forkWorkspaceOwnsPath("/private/tmp/link/oslo")));
@@ -790,6 +796,72 @@ describe("WorkspaceService", () => {
     }).pipe(
       Effect.scoped,
       Effect.provide(WorkspaceStore.layer.pipe(Layer.provideMerge(servicesLayer(fixture)))),
+    );
+  });
+
+  it.effect("follows the branch its first message names", () => {
+    const fixture = makeFixture();
+    const registry = makeWorkspaceOwnershipRegistry();
+    const record = (name: string, branch: string, checkout: Workspace["checkout"]) => ({
+      workspace: {
+        id: WorkspaceId.make(`ws-${name}`),
+        projectId: fixture.projectId,
+        name,
+        worktreePath: NodePath.join(fixture.root, name),
+        branch,
+        baseRef: "main",
+        status: "ready" as const,
+        pendingOperation: null,
+        error: null,
+        lastScript: null,
+        setupTerminal: null,
+        runningScripts: [],
+        setupPending: false,
+        checkout,
+        createdAt: "2026-10-19T00:00:00.000Z",
+        archivedAt: null,
+        lastTurnAt: null,
+      },
+      archivedThreadIds: [],
+      log: "",
+    });
+    const renamed = (name: string, branch: string) =>
+      fixture.emit({
+        type: "thread.metadata-updated",
+        threadId: ThreadId.make(`chat-${name}`),
+        payload: {
+          projectId: fixture.projectId,
+          worktreePath: NodePath.join(fixture.root, name),
+          branch,
+          lineage: { relationshipToParent: null },
+        },
+      } as never);
+    const awaits = (name: string, branch: string) =>
+      forkWorkspaceAwaitsBranchName(NodePath.join(fixture.root, name), branch).pipe(
+        Effect.provideService(WorkspaceOwnership, registry),
+      );
+
+    return Effect.gen(function* () {
+      const store = yield* WorkspaceStore.WorkspaceStore;
+      yield* store.save(record("oslo", "fork/oslo", { type: "new", startFromOrigin: true }));
+      yield* store.save(record("lima", "feature/lima", { type: "branch" }));
+
+      const service = yield* WorkspaceService.make;
+      assert.isTrue(yield* awaits("oslo", "fork/oslo"));
+      // A branch the user checked out keeps its name.
+      assert.isFalse(yield* awaits("lima", "feature/lima"));
+
+      renamed("lima", "fork/elsewhere");
+      renamed("oslo", "fork/fix-login-redirect");
+      yield* awaitWorkspace(service, (workspace) => workspace.branch === "fork/fix-login-redirect");
+      const byName = new Map((yield* service.list).map((workspace) => [workspace.name, workspace]));
+      assert.equal(byName.get("lima")?.branch, "feature/lima");
+      // Named once, so later chats keep it.
+      assert.isFalse(yield* awaits("oslo", "fork/fix-login-redirect"));
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(WorkspaceStore.layer.pipe(Layer.provideMerge(servicesLayer(fixture)))),
+      Effect.provideService(WorkspaceOwnership, registry),
     );
   });
 });

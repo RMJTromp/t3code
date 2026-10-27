@@ -69,7 +69,11 @@ it.effect("a new chat in a workspace does not rerun the project's setup action",
   );
   const registry = makeWorkspaceOwnershipRegistry();
   const workspaceId = WorkspaceId.make("ws-guard");
-  registry.set(workspaceId, ["/worktrees/repo/oslo"], { workspaceId, status: "ready" });
+  registry.set(workspaceId, ["/worktrees/repo/oslo"], {
+    workspaceId,
+    status: "ready",
+    awaitingBranchName: null,
+  });
 
   return Effect.gen(function* () {
     const runner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;

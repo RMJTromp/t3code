@@ -32,7 +32,10 @@ Click **+** next to a repository in the sidebar to open the new-workspace compos
 
 T3 Code then creates the workspace: a worktree named after a city, on a new branch that uses your
 **Settings → Source Control → Worktree branch naming** prefix (for example `t3/oslo`), or on the
-branch or pull request you picked. It opens the first chat right away, and the setup script's
+branch or pull request you picked. When the workspace's first message is sent, a new branch is
+renamed after the task, like upstream's worktree chats (for example `t3/fix-login-redirect`). The
+name follows your branch naming mode and prefix and comes from your Source Control writer or text
+generation model. The folder keeps its city name, and branches you checked out keep theirs. It opens the first chat right away, and the setup script's
 output streams live in a terminal in the right panel. Your message is sent once setup finishes. If
 setup fails, it stays in the composer for you to send yourself.
 
@@ -51,6 +54,9 @@ Open a workspace from the sidebar to see its chats as tabs above the conversatio
 you opened them. **+** starts another chat in the same worktree. Hover a tab and click its **x** to close the chat; the history
 button at the right of the tabs reopens closed chats. Right-click a tab to mark it unread, rename
 it, close it, or close the others.
+
+Once a workspace's branch has a pull request, the branch icon beside it in the sidebar shows the
+pull request's state: green when open, gray as a draft, purple once merged, and red when closed.
 
 While an agent works, its tab and the workspace in the sidebar show a small spinner. A chat with a
 reply you have not read shows a blue dot, and its workspace name turns brighter.

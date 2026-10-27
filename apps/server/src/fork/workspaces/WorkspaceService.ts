@@ -143,6 +143,14 @@ const isBusy = (thread: {
 }): boolean => thread.activeRunId !== null || (thread.activityRunStatus ?? null) !== null;
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+
+/** A new branch still named after its city gets a real name from the first message. */
+export const awaitingBranchName = (workspace: Workspace): string | null =>
+  workspace.checkout.type === "new" &&
+  workspace.branch !== null &&
+  (workspace.branch === workspace.name || workspace.branch.endsWith(`/${workspace.name}`))
+    ? workspace.branch
+    : null;
 const isWorkspaceError = Schema.is(WorkspaceError);
 
 export const make = Effect.gen(function* () {
@@ -209,7 +217,11 @@ export const make = Effect.gen(function* () {
         workspace.worktreePath,
         ...(realPaths.has(workspace.id) ? [realPaths.get(workspace.id)!] : []),
       ],
-      { workspaceId: workspace.id, status: workspace.status },
+      {
+        workspaceId: workspace.id,
+        status: workspace.status,
+        awaitingBranchName: awaitingBranchName(workspace),
+      },
     );
 
   const recordRealPath = (workspace: Workspace) =>
@@ -463,6 +475,25 @@ export const make = Effect.gen(function* () {
     thread.lineage.relationshipToParent !== "subagent" &&
     thread.projectId === workspace.projectId &&
     samePath(thread.worktreePath, workspace.worktreePath);
+
+  /** Upstream's first-message rename moves every chat off the city branch; the workspace follows. */
+  const followBranchRename = Effect.fn("WorkspaceService.followBranchRename")(function* (thread: {
+    readonly projectId: ProjectId;
+    readonly worktreePath: string | null;
+    readonly branch: string | null;
+    readonly lineage: { readonly relationshipToParent: string | null };
+  }) {
+    const { branch } = thread;
+    if (branch === null) return;
+    for (const { workspace } of Array.from(records.values())) {
+      if (workspace.status === "archived" || workspace.branch === branch) continue;
+      if (awaitingBranchName(workspace) === null || !isWorkspaceChat(workspace, thread)) continue;
+      yield* update(workspace.id, (record) => ({
+        ...record,
+        workspace: { ...record.workspace, branch },
+      }));
+    }
+  });
 
   /** Kept on the workspace so archiving or deleting the chat does not drop it in the sidebar. */
   const recordTurn = Effect.fn("WorkspaceService.recordTurn")(function* (
@@ -1230,6 +1261,16 @@ export const make = Effect.gen(function* () {
 
   yield* threads.streamDomainEvents.pipe(
     Stream.runForEach((event) => {
+      if (event.type === "thread.metadata-updated") {
+        return followBranchRename(event.payload).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("workspace branch tracking skipped", {
+              threadId: event.threadId,
+              cause,
+            }),
+          ),
+        );
+      }
       if (event.type !== "run.created" && event.type !== "run.updated") return Effect.void;
       const { requestedAt, completedAt } = event.payload;
       // A start counts when the run is created, an end once it completes; nothing in between.

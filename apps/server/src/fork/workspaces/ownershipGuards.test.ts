@@ -2,7 +2,10 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import { ProjectId, WorkspaceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import { TestClock } from "effect/testing";
 
 import * as ProjectService from "../../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../../project/ProjectSetupScriptRunner.ts";
@@ -10,9 +13,9 @@ import * as ServerSettings from "../../serverSettings.ts";
 import * as TerminalManager from "../../terminal/Manager.ts";
 import { makeWorkspaceOwnershipRegistry, WorkspaceOwnership } from "./WorkspaceOwnership.ts";
 
-it.effect("a new chat in a workspace does not rerun the project's setup action", () => {
-  const projectId = ProjectId.make("project-guard");
-  const opened: Array<string> = [];
+const projectId = ProjectId.make("project-guard");
+
+function setupRunnerLayer(opened: Array<string>) {
   const layer = ProjectSetupScriptRunner.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -65,6 +68,12 @@ it.effect("a new chat in a workspace does not rerun the project's setup action",
       ),
     ),
   );
+  return layer;
+}
+
+it.effect("a new chat in a workspace does not rerun the project's setup action", () => {
+  const opened: Array<string> = [];
+  const layer = setupRunnerLayer(opened);
   const registry = makeWorkspaceOwnershipRegistry();
   const workspaceId = WorkspaceId.make("ws-guard");
   registry.set(workspaceId, ["/worktrees/repo/oslo"], {
@@ -89,4 +98,36 @@ it.effect("a new chat in a workspace does not rerun the project's setup action",
     assert.equal(other.status, "started");
     assert.deepEqual(opened, ["/worktrees/repo/other"]);
   }).pipe(Effect.provide(layer), Effect.provideService(WorkspaceOwnership, registry));
+});
+
+it.effect("a workspace's first chat waits for the workspace's own setup to finish", () => {
+  const registry = makeWorkspaceOwnershipRegistry();
+  const workspaceId = WorkspaceId.make("ws-setup");
+  const setOwner = (setupPending: boolean) =>
+    registry.set(workspaceId, ["/worktrees/repo/oslo"], {
+      workspaceId,
+      status: "ready",
+      setupPending,
+    });
+  setOwner(true);
+
+  return Effect.gen(function* () {
+    const runner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+    const launch = runner.runForThread({
+      threadId: "thread-1",
+      projectId,
+      worktreePath: "/worktrees/repo/oslo",
+    });
+
+    const held = yield* launch.pipe(Effect.timeoutOption("1 minute"), Effect.forkChild);
+    yield* TestClock.adjust("1 minute");
+    assert.isTrue(Option.isNone(yield* Fiber.join(held)));
+
+    const waiting = yield* Effect.forkChild(launch);
+    setOwner(false);
+    assert.deepEqual(yield* Fiber.join(waiting), { status: "no-script" });
+  }).pipe(
+    Effect.provide(setupRunnerLayer([])),
+    Effect.provideService(WorkspaceOwnership, registry),
+  );
 });

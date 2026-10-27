@@ -8,8 +8,9 @@ import { useWorkspaceForPath } from "./state";
 
 /**
  * Drafts the new-workspace dialog filled with a prompt, by thread id. The send
- * waits until the setup script has finished, so the agent starts in a set-up
- * folder. In memory only: after a reload the prompt simply stays in the composer.
+ * waits only for the folder to exist; the server holds the turn until setup
+ * finishes, so it starts even if the user has left the chat. In memory only:
+ * after a reload the prompt simply stays in the composer.
  */
 const usePendingFirstSends = create<{ readonly threadIds: ReadonlySet<ThreadId> }>(() => ({
   threadIds: new Set(),
@@ -33,8 +34,8 @@ function takeWorkspaceFirstSend(threadId: ThreadId): boolean {
 }
 
 /**
- * Sends a queued draft through ChatView's own send once its workspace's setup
- * is done. A failed create or setup cancels it and leaves the prompt to send by hand.
+ * Sends a queued draft through ChatView's own send once its workspace's folder
+ * exists. A failed create cancels it and leaves the prompt to send by hand.
  */
 export function useWorkspaceFirstSend(draftId: DraftId | null, send: () => unknown): void {
   const sendNow = useEffectEvent(send);
@@ -47,32 +48,26 @@ export function useWorkspaceFirstSend(draftId: DraftId | null, send: () => unkno
   );
   const workspace = useWorkspaceForPath(draft?.environmentId ?? null, draft?.worktreePath ?? null);
   const status = workspace?.status ?? null;
-  const setupDone = workspace !== null && !workspace.setupPending;
-  const setupFailed =
-    workspace?.lastScript?.kind === "setup" && workspace.lastScript.phase === "failed";
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- Workspace setup finishes on the server, so the streamed status decides when to send.
+  // oxlint-disable-next-line t3code/react-effect-budget -- The worktree is created on the server, so the streamed status decides when to send.
   useEffect(() => {
     if (threadId === null || !queued) return;
-    if (status === "failed" || (setupDone && setupFailed)) {
+    if (status === "failed") {
       if (takeWorkspaceFirstSend(threadId)) {
         toastManager.add({
           type: "warning",
           title: "Your message was not sent",
-          description:
-            status === "failed"
-              ? "The workspace could not be created. Your message is still in the composer."
-              : "The setup script failed. Your message is still in the composer.",
+          description: "The workspace could not be created. Your message is still in the composer.",
         });
       }
       return;
     }
-    if (status !== "ready" || !setupDone) return;
+    if (status !== "ready") return;
     // Lets the composer render the prefilled prompt before ChatView reads it.
     // Taken inside the frame, so a cancelled frame (Strict Mode) still sends later.
     const frame = requestAnimationFrame(() => {
       if (takeWorkspaceFirstSend(threadId)) void sendNow();
     });
     return () => cancelAnimationFrame(frame);
-  }, [threadId, queued, status, setupDone, setupFailed]);
+  }, [threadId, queued, status]);
 }

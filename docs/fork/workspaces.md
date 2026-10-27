@@ -39,8 +39,10 @@ name it; the name waits for the message that does. When you point at an issue or
 comes from what the agent found there. A branch that has been pushed or has a pull request
 keeps its name. The name follows your branch naming mode and prefix and
 comes from your Source Control writer or text generation model. The folder keeps its city name, and branches you checked out keep theirs. It opens the first chat right away, and the setup script's
-output streams live in a terminal in the right panel. Your message is sent once setup finishes. If
-setup fails, it stays in the composer for you to send yourself.
+output streams live in a terminal in the right panel. Your message is sent as soon as the folder
+exists, and the agent starts once setup finishes, even if you have moved on to another workspace.
+If setup fails, the agent still starts, and the workspace shows a warning icon. If the workspace
+can't be created, your message stays in the composer.
 
 Hold **⌘** (macOS) or **Ctrl** while clicking **+** to skip the composer and create a workspace
 on a new branch from the default branch at once.

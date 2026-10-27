@@ -226,7 +226,7 @@ export const make = Effect.gen(function* () {
         workspace.worktreePath,
         ...(realPaths.has(workspace.id) ? [realPaths.get(workspace.id)!] : []),
       ],
-      { workspaceId: workspace.id, status: workspace.status },
+      { workspaceId: workspace.id, status: workspace.status, setupPending: workspace.setupPending },
     );
 
   const recordRealPath = (workspace: Workspace) =>
@@ -830,7 +830,7 @@ export const make = Effect.gen(function* () {
     yield* recordRealPath(workspace);
     yield* setStatus(workspaceId, "ready", { pendingOperation: null, error: null });
     const setupOk = yield* runScript(workspaceId, "setup");
-    // A queued first message waits on this, not on "ready", so it runs after setup.
+    // Chats' first turns wait on this (`forkWorkspaceSetupSettled`), so they run after setup.
     yield* update(workspaceId, (record) => ({
       ...record,
       workspace: {
@@ -1392,6 +1392,7 @@ export const make = Effect.gen(function* () {
         lastScript: { ...workspace.lastScript, phase: "failed", endedAt: startedAt },
       };
     }
+    if (workspace.setupPending) workspace = { ...workspace, setupPending: false };
     records.set(workspace.id, { ...record, workspace });
     syncOwnership(workspace);
     if (folderExists) yield* recordRealPath(workspace);

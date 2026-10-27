@@ -18,7 +18,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as ServerSettings from "../serverSettings.ts";
-import { forkWorkspaceOwnsPath } from "../fork/workspaces/WorkspaceOwnership.ts"; // fork:workspaces
+import { forkWorkspaceSetupSettled } from "../fork/workspaces/WorkspaceOwnership.ts"; // fork:workspaces
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as ProjectService from "./ProjectService.ts";
 
@@ -394,8 +394,8 @@ export const make = Effect.gen(function* () {
       ),
     );
     const trigger = input.trigger ?? "setup";
-    // fork:workspaces: a workspace runs its own setup once, not for every chat.
-    if (trigger === "setup" && (yield* forkWorkspaceOwnsPath(input.worktreePath)))
+    // fork:workspaces: a workspace runs its own setup once; its chats wait for it, not rerun it.
+    if (trigger === "setup" && (yield* forkWorkspaceSetupSettled(input.worktreePath)))
       return { status: "no-script" } as const;
     const scripts = resolveProjectScripts(settings, project);
     const script =

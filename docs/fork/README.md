@@ -59,7 +59,7 @@ lists archived workspaces, so no client reaches it.
 | `packages/client-runtime/src/rpc/client.ts`                                                                       | Let clients subscribe to the two workspace streams.                                     |
 | `apps/server/src/server.ts`, `ws.ts`, `ws.test.ts`                                                                | Provide the workspace layer and its RPC handlers.                                       |
 | `apps/server/src/auth/RpcAuthorization.ts`, `observability/RpcInstrumentation.ts`                                 | Scopes and metrics tags for the new RPCs.                                               |
-| `apps/server/src/project/ProjectSetupScriptRunner.ts`                                                             | A workspace runs its setup once; new chats in it skip the project's setup action.       |
+| `apps/server/src/project/ProjectSetupScriptRunner.ts`                                                             | A workspace runs its setup once; new chats skip the project's setup and wait for it.    |
 | `apps/server/src/git/GitWorkflowService.ts`                                                                       | Refuse to remove a live workspace's worktree from anywhere but its own archive.         |
 | `packages/provider-core/src/server/{textGeneration,textGenerationOperations}.ts`                                  | A workspace branch-name request uses the fork prompt, which may answer inconclusive.    |
 | `apps/server/src/storageCleanup.ts`                                                                               | Cleanup policies keep workspace worktrees.                                              |

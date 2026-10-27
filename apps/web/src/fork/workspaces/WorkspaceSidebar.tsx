@@ -48,6 +48,7 @@ import {
   workspaceLastActivity,
 } from "./logic";
 import { useEnvironmentWorkspaces } from "./state";
+import { useWorkspaceTerminalActivity } from "./terminalActivity";
 import { useActiveWorkspaceLocation } from "./useActiveWorkspaceLocation";
 import { useArchiveWorkspace } from "./useArchiveWorkspace";
 import { useCreateWorkspace, useOpenWorkspace } from "./useOpenWorkspace";
@@ -362,7 +363,8 @@ function WorkspaceRow({
     workspace.status === "archiving" ||
     workspace.lastScript?.phase === "running" ||
     workspace.runningScripts.length > 0;
-  const unread = attention.some((entry) => entry.unread);
+  const terminal = useWorkspaceTerminalActivity(environmentId, workspace.worktreePath);
+  const unread = attention.some((entry) => entry.unread) || terminal.finished;
   const failed = workspace.status === "failed" || workspace.error !== null;
   const target = { environmentId, workspaceId: workspace.id };
   const runningScript = workspace.runningScripts[0];
@@ -415,6 +417,13 @@ function WorkspaceRow({
         </span>
         {unread ? (
           <span aria-label="Unread" className="size-1.5 shrink-0 rounded-full bg-primary" />
+        ) : null}
+        {terminal.longRunning ? (
+          <span
+            aria-label="Terminal running"
+            data-fork-terminal-dot
+            className="size-1.5 shrink-0 rounded-full bg-destructive"
+          />
         ) : null}
         {runningScript ? (
           <span className="ml-auto max-w-24 shrink-0 truncate text-primary text-xs group-hover/workspace:hidden">

@@ -309,3 +309,19 @@ export function normalizeWorkspacePath(path: string): string {
   if (trimmed.length <= 1) return trimmed;
   return trimmed.replace(/[\\/]+$/, "");
 }
+
+export const WORKSPACE_SETUP_TERMINAL_ID = "workspace-setup";
+export const WORKSPACE_ARCHIVE_TERMINAL_ID = "workspace-archive";
+
+export function workspaceScriptTerminalId(scriptId: string): string {
+  return `script-${scriptId}`;
+}
+
+/** Setup, archive, and Run script terminals, as opposed to ones the user opened. */
+export function isWorkspaceScriptTerminalId(terminalId: string): boolean {
+  return (
+    terminalId === WORKSPACE_SETUP_TERMINAL_ID ||
+    terminalId === WORKSPACE_ARCHIVE_TERMINAL_ID ||
+    terminalId.startsWith("script-")
+  );
+}

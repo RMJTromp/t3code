@@ -66,6 +66,18 @@ reply you have not read shows a blue dot, and its workspace name turns brighter.
 
 Chats without a repository stay in **Chats** at the bottom of the sidebar.
 
+## Long-running terminal commands
+
+When a command in one of a workspace's terminals has been running for more than 5 seconds, a red
+dot with a slow pulse appears beside the workspace's name. Script terminals (setup, archive, and
+**Run script**) count too, so a running dev server keeps it on.
+
+If the command ran for at least 30 seconds and you are in another workspace when it finishes, the
+workspace gets the blue unread dot until you open it. Its place in the sidebar doesn't change.
+T3 Code also plays the completion sound if you are in another workspace or another app, as long as
+**Settings → Notifications** includes sound. Script terminals never play it. The dot is kept only
+until you reload the app.
+
 ## Stay up to date with the target branch
 
 When the target branch on origin gets commits your workspace's branch doesn't have, the workspace

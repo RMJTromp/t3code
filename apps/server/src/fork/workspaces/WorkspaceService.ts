@@ -19,6 +19,9 @@ import {
   type WorkspaceScriptKind,
   type WorkspaceStatus,
   type WorkspaceUpdateOutcome,
+  WORKSPACE_ARCHIVE_TERMINAL_ID,
+  WORKSPACE_SETUP_TERMINAL_ID,
+  workspaceScriptTerminalId,
 } from "@t3tools/contracts";
 import { formatGeneratedBranchName } from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -125,8 +128,6 @@ const decodeGhPullRequests = Schema.decodeUnknownEffect(
     ),
   ),
 );
-const SETUP_TERMINAL_ID = "workspace-setup";
-const ARCHIVE_TERMINAL_ID = "workspace-archive";
 const decodeProjectFileConfig = Schema.decodeUnknownOption(
   Schema.fromJsonString(WorkspaceProjectFileConfig),
 );
@@ -418,7 +419,8 @@ export const make = Effect.gen(function* () {
         ? workspace.setupTerminal
         : {
             threadId: workspaceTerminalThread(workspace.id),
-            terminalId: kind === "setup" ? SETUP_TERMINAL_ID : ARCHIVE_TERMINAL_ID,
+            terminalId:
+              kind === "setup" ? WORKSPACE_SETUP_TERMINAL_ID : WORKSPACE_ARCHIVE_TERMINAL_ID,
           };
     const result = yield* runWorkspaceScript({
       threadId: terminal.threadId,
@@ -916,7 +918,7 @@ export const make = Effect.gen(function* () {
           setupTerminal:
             setupThreadId === undefined
               ? null
-              : { threadId: setupThreadId, terminalId: SETUP_TERMINAL_ID },
+              : { threadId: setupThreadId, terminalId: WORKSPACE_SETUP_TERMINAL_ID },
           runningScripts: [],
           setupPending: true,
           checkout:
@@ -1117,7 +1119,7 @@ export const make = Effect.gen(function* () {
         setupTerminal:
           archivedThreadIds[0] === undefined
             ? record.workspace.setupTerminal
-            : { threadId: archivedThreadIds[0], terminalId: SETUP_TERMINAL_ID },
+            : { threadId: archivedThreadIds[0], terminalId: WORKSPACE_SETUP_TERMINAL_ID },
         status: "ready",
         pendingOperation: null,
         error:
@@ -1317,7 +1319,7 @@ export const make = Effect.gen(function* () {
       scriptId: script.id,
       name: script.name.trim() || "script",
       threadId: input.threadId,
-      terminalId: `script-${script.id}`,
+      terminalId: workspaceScriptTerminalId(script.id),
     };
     yield* runWorkspaceScript({
       threadId: running.threadId,

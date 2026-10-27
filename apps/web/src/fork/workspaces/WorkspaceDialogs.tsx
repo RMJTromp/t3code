@@ -17,6 +17,8 @@ import { forkWorkspaceEnvironment, useEnvironmentWorkspaces, useWorkspaceLog } f
 import { useArchiveWorkspace, ArchiveFailureNotifier } from "./useArchiveWorkspace";
 import { NewWorkspaceComposer } from "./NewWorkspaceComposer";
 import { useConnectedEnvironmentIds } from "../../state/environments";
+import { forkWorkspaceSidebarEnabled } from "./registry";
+import { TerminalActivityWatcher } from "./TerminalActivityWatcher";
 
 export function ForkWorkspaceDialogHost() {
   const dialogs = useForkWorkspaceDialogs();
@@ -26,6 +28,11 @@ export function ForkWorkspaceDialogHost() {
       {environmentIds.map((environmentId) => (
         <ArchiveFailureNotifier key={environmentId} environmentId={environmentId} />
       ))}
+      {forkWorkspaceSidebarEnabled()
+        ? environmentIds.map((environmentId) => (
+            <TerminalActivityWatcher key={environmentId} environmentId={environmentId} />
+          ))
+        : null}
       {dialogs.newWorkspace ? <NewWorkspaceComposer preset={dialogs.newWorkspace} /> : null}
       {dialogs.log ? <WorkspaceLogDialog target={dialogs.log} /> : null}
     </>

@@ -4,7 +4,6 @@ import type { ContextMenuItem, EnvironmentId, ThreadId, Workspace } from "@t3too
 import { ArchiveRestoreIcon, HistoryIcon, MessageSquareIcon, PlusIcon } from "lucide-react";
 import { type KeyboardEvent, type MouseEvent, memo, useEffect, useRef, useState } from "react";
 
-import { resolveRenameCommit } from "../../components/chat/ChatHeader";
 import { Button } from "../../components/ui/button";
 import {
   Menu,
@@ -224,15 +223,15 @@ function WorkspaceTabStrip({
 
   const commitRename = (thread: EnvironmentThreadShell, title: string) => {
     setRenamingId(null);
-    const resolution = resolveRenameCommit({ title, originalTitle: thread.title });
-    if (resolution.action === "reject-empty") {
+    const trimmed = title.trim();
+    if (trimmed.length === 0) {
       toastManager.add({ type: "warning", title: "Chat title cannot be empty" });
       return;
     }
-    if (resolution.action === "noop") return;
+    if (trimmed === thread.title) return;
     void updateMetadata({
       environmentId,
-      input: { threadId: thread.id, title: resolution.title },
+      input: { threadId: thread.id, title: trimmed },
     });
   };
 

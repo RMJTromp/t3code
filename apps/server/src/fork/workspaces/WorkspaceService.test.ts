@@ -220,7 +220,7 @@ function servicesLayer(fixture: Fixture) {
   };
   return Layer.mergeAll(
     Layer.mock(ProjectService.ProjectService)({
-      getById: () => Effect.succeed(Option.some(project)),
+      getById: () => Effect.succeedSome(project),
     }),
     Layer.mock(GitWorkflowService.GitWorkflowService)({
       remoteExists: () => Effect.succeed(false),

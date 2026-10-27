@@ -3,7 +3,6 @@ import { assert, it } from "@effect/vitest";
 import { ProjectId, WorkspaceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 
 import * as ProjectService from "../../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../../project/ProjectSetupScriptRunner.ts";
@@ -19,28 +18,26 @@ it.effect("a new chat in a workspace does not rerun the project's setup action",
       Layer.mergeAll(
         Layer.mock(ProjectService.ProjectService)({
           getById: () =>
-            Effect.succeed(
-              Option.some({
-                id: projectId,
-                title: "Project",
-                workspaceRoot: "/repo",
-                repositoryIdentity: null,
-                faviconPath: null,
-                defaultModelSelection: null,
-                scripts: [
-                  {
-                    id: "setup",
-                    name: "Setup",
-                    command: "vp install",
-                    icon: "configure" as const,
-                    runOnWorktreeCreate: true,
-                  },
-                ],
-                createdAt: "2026-10-19T00:00:00.000Z",
-                updatedAt: "2026-10-19T00:00:00.000Z",
-                deletedAt: null,
-              }),
-            ),
+            Effect.succeedSome({
+              id: projectId,
+              title: "Project",
+              workspaceRoot: "/repo",
+              repositoryIdentity: null,
+              faviconPath: null,
+              defaultModelSelection: null,
+              scripts: [
+                {
+                  id: "setup",
+                  name: "Setup",
+                  command: "vp install",
+                  icon: "configure" as const,
+                  runOnWorktreeCreate: true,
+                },
+              ],
+              createdAt: "2026-10-19T00:00:00.000Z",
+              updatedAt: "2026-10-19T00:00:00.000Z",
+              deletedAt: null,
+            }),
         }),
         Layer.mock(TerminalManager.TerminalManager)({
           open: (input) =>
@@ -60,6 +57,7 @@ it.effect("a new chat in a workspace does not rerun the project's setup action",
                 updatedAt: "2026-10-19T00:00:00.000Z",
               };
             }),
+          subscribe: () => Effect.succeed(() => {}),
           write: () => Effect.void,
         }),
         ServerSettings.layerTest(),

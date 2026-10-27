@@ -134,6 +134,7 @@ function WorkspaceTabStrip({
   // Remembered while still a draft, so the chat keeps this place once sent.
   const openedAt = useWorkspaceTabOrder((state) => state.openedAt);
   const rememberOpened = useWorkspaceTabOrder((state) => state.remember);
+  // oxlint-disable-next-line t3code/react-effect-budget -- Persists each draft's opening time in a store, which render must not write.
   useEffect(() => {
     rememberOpened(drafts.map((draft) => [draft.threadId, draft.createdAt] as const));
   }, [drafts, rememberOpened]);
@@ -141,6 +142,7 @@ function WorkspaceTabStrip({
   const [renamingId, setRenamingId] = useState<ThreadId | null>(null);
 
   const remember = useWorkspaceLastLocation((state) => state.remember);
+  // oxlint-disable-next-line t3code/react-effect-budget -- Persists the visible tab so returning to the workspace restores it.
   useEffect(() => {
     remember(
       workspace.id,
@@ -159,6 +161,7 @@ function WorkspaceTabStrip({
     workspace.lastScript.phase === "running"
       ? workspace.lastScript.startedAt
       : null;
+  // oxlint-disable-next-line t3code/react-effect-budget -- Setup starts on the server; open its terminal once per run.
   useEffect(() => {
     if (setupStartedAt === null || setupTerminal === null) return;
     const ref = scopeThreadRef(environmentId, setupTerminal.threadId);
@@ -172,6 +175,7 @@ function WorkspaceTabStrip({
     .map((entry) => entry.terminalId)
     .join("\n");
   const seenScriptTerminals = useRef<ReadonlySet<string> | null>(null);
+  // oxlint-disable-next-line t3code/react-effect-budget -- Scripts start on the server; open each new terminal once.
   useEffect(() => {
     const current = new Set(scriptTerminals.length === 0 ? [] : scriptTerminals.split("\n"));
     const seen = seenScriptTerminals.current;

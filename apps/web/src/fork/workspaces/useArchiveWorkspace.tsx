@@ -101,6 +101,7 @@ export function useArchiveWorkspace() {
 export function ArchiveFailureNotifier({ environmentId }: { environmentId: EnvironmentId }) {
   const workspaces = useEnvironmentWorkspaces(environmentId);
   const previous = useRef(new Map<string, Workspace["status"]>());
+  // oxlint-disable-next-line t3code/react-effect-budget -- An archive ends on the server, so only the streamed status change can raise its toast.
   useEffect(() => {
     const seen = previous.current;
     for (const workspace of workspaces) {

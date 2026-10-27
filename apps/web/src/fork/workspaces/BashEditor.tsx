@@ -27,6 +27,7 @@ export function BashEditor(props: {
   const [highlighter, setHighlighter] = useState<Highlighter | null>(null);
   const highlightRef = useRef<HTMLPreElement>(null);
 
+  // oxlint-disable-next-line t3code/react-effect-budget -- Loads the shared highlighter asynchronously; ignores a load that resolves after unmount.
   useEffect(() => {
     let active = true;
     void getSyntaxHighlighterPromise("bash").then((loaded) => {

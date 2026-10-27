@@ -57,12 +57,10 @@ const NO_SKILLS: ReadonlyArray<never> = [];
 const noop = () => {};
 
 /**
- * The chat composer's prompt editor, with the trigger menus that make sense
- * before a thread exists: `@` files, `#` pull requests and issues, `$` skills,
- * and the provider's `/` commands. A `#` pull request is upstream's chip, whose
- * record the caller keeps in `reviewComments` and hands to the new draft. Files are searched in the project's root checkout, since the
- * worktree does not exist yet; mentions are relative, so they resolve in the
- * worktree too. The trigger glue is a slim copy of ChatComposer's.
+ * A slim copy of ChatComposer's trigger glue, for before a thread exists. A `#` pull request's
+ * record lives in `reviewComments` and moves to the new draft. Files are searched in the
+ * project's root checkout, since the worktree does not exist yet; mentions are relative, so
+ * they resolve in the worktree too.
  */
 export function NewWorkspacePromptEditor({
   editorRef,

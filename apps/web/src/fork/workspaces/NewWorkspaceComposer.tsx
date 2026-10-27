@@ -218,6 +218,7 @@ function ProjectComposer({
     // issue; two frames, so the editor has taken the new value first.
     requestAnimationFrame(() => requestAnimationFrame(() => editorRef.current?.focusAtEnd()));
   };
+  // oxlint-disable-next-line t3code/react-effect-budget -- Focus the editor once it has mounted; the frame is cancelled on unmount.
   useEffect(() => {
     const frame = requestAnimationFrame(() => editorRef.current?.focusAtEnd());
     return () => cancelAnimationFrame(frame);
@@ -282,8 +283,8 @@ function ProjectComposer({
   });
   const interactionModeTooltip =
     interactionMode === "plan"
-      ? "Plan mode — click to return to normal build mode"
-      : "Default mode — click to enter plan mode";
+      ? "Plan mode. Click to return to normal build mode"
+      : "Default mode. Click to enter plan mode";
 
   const submit = async () => {
     if (creating || loadingIssue) return;

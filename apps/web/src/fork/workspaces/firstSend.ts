@@ -51,6 +51,7 @@ export function useWorkspaceFirstSend(draftId: DraftId | null, send: () => unkno
   const setupFailed =
     workspace?.lastScript?.kind === "setup" && workspace.lastScript.phase === "failed";
 
+  // oxlint-disable-next-line t3code/react-effect-budget -- Workspace setup finishes on the server, so the streamed status decides when to send.
   useEffect(() => {
     if (threadId === null || !queued) return;
     if (status === "failed" || (setupDone && setupFailed)) {

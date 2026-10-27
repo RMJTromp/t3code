@@ -56,13 +56,9 @@ function quoteForShell(value: string, shell: CompletionShell): string {
 }
 
 /**
- * The script runs from a file rather than being typed into the interactive
- * shell: a line editor mangles long pastes (history expansion, comments that
- * zsh does not treat as comments, tabs that trigger completion), and a
- * `#!/usr/bin/env bash` line only takes effect when the kernel executes a file.
- * Scripts without a shebang run with the user's shell. The screen is cleared
- * first so only the script's output shows, and the sentinel, which carries the
- * exit code, is erased right after it is printed.
+ * Runs the script from a file, not typed into the shell: line editors mangle long pastes, and a
+ * shebang only works when the kernel executes a file. Scripts without one use the user's shell.
+ * The screen is cleared first, and the exit-code sentinel is erased once printed.
  */
 export function wrapWorkspaceCommand(
   scriptPath: string,
@@ -85,16 +81,12 @@ export function wrapWorkspaceCommand(
 }
 
 function stripTerminalControl(text: string): string {
-  return (
-    text
-      .replace(
-        // eslint-disable-next-line no-control-regex -- ANSI escape sequences start with ESC.
-        /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Za-z0-9]|\x1b[=>]/g,
-        "",
-      )
-      // eslint-disable-next-line no-control-regex -- removing control characters is the point.
-      .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "")
-  );
+  return text
+    .replace(
+      /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Za-z0-9]|\x1b[=>]/g,
+      "",
+    )
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
 }
 
 /**

@@ -72,6 +72,7 @@ export function useGhList<K extends GhListKind>(input: {
   const list = useEffectEvent((commandInput: Parameters<typeof command>[0]) =>
     command(commandInput),
   );
+  // oxlint-disable-next-line t3code/react-effect-budget -- Fetches from gh on the server whenever the list inputs change.
   useEffect(() => {
     if (!enabled || environmentId === null || projectId === null) return;
     void list({

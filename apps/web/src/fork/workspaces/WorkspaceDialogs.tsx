@@ -119,9 +119,9 @@ function WorkspaceLogView({
 }) {
   const log = useWorkspaceLog(environmentId, workspaceId);
   const ref = useRef<HTMLPreElement>(null);
+  // oxlint-disable-next-line t3code/react-effect-budget -- Follow new output like a terminal does, before it paints.
   useLayoutEffect(() => {
     const element = ref.current;
-    // Follow new output like a terminal does.
     if (element && log.length > 0) element.scrollTop = element.scrollHeight;
   }, [log]);
   return (
@@ -135,6 +135,5 @@ function WorkspaceLogView({
 }
 
 function stripAnsi(text: string): string {
-  // oxlint-disable-next-line no-control-regex -- removing terminal escapes is the point.
   return text.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
 }

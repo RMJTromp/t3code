@@ -79,8 +79,8 @@ function WorkspaceScriptsEditor({
     };
   };
 
-  // Leaving the page must not drop the last keystrokes.
   const flushOnLeave = useEffectEvent(flush);
+  // oxlint-disable-next-line t3code/react-effect-budget -- Leaving the page calls no handler, so only unmount can save the last keystrokes.
   useEffect(() => () => flushOnLeave(), []);
 
   return (

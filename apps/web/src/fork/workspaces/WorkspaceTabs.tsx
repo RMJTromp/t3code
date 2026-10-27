@@ -46,6 +46,7 @@ import {
 import { useWorkspaceForPath } from "./state";
 import { useWorkspaceTabOrder } from "./tabOrder";
 import { useOpenWorkspace } from "./useOpenWorkspace";
+import { UpdateFromBaseButton } from "./UpdateFromBaseButton";
 import { useThreadAttention } from "./useThreadAttention";
 
 type TabMenuAction = "mark-unread" | "rename" | "close" | "close-others";
@@ -335,6 +336,7 @@ function WorkspaceTabStrip({
           </button>
         </div>
       </ScrollArea>
+      <UpdateFromBaseButton environmentId={environmentId} workspace={workspace} />
       <ClosedChatsMenu
         environmentId={environmentId}
         workspace={workspace}

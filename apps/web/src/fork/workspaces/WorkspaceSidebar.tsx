@@ -51,6 +51,7 @@ import { useEnvironmentWorkspaces } from "./state";
 import { useActiveWorkspaceLocation } from "./useActiveWorkspaceLocation";
 import { useArchiveWorkspace } from "./useArchiveWorkspace";
 import { useCreateWorkspace, useOpenWorkspace } from "./useOpenWorkspace";
+import { UpdateFromBaseButton } from "./UpdateFromBaseButton";
 import { type ThreadAttention, useThreadAttention } from "./useThreadAttention";
 import { BrailleSpinner } from "./BrailleSpinner";
 
@@ -435,6 +436,7 @@ function WorkspaceRow({
           <CircleAlertIcon />
         </Button>
       ) : null}
+      <UpdateFromBaseButton environmentId={environmentId} workspace={workspace} />
       {/* Takes the time's place on hover rather than reserving room beside it. */}
       <span className="hidden group-focus-within/workspace:flex group-hover/workspace:flex">
         <Button

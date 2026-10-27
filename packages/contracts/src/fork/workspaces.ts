@@ -114,6 +114,8 @@ export const Workspace = Schema.Struct({
   archivedAt: Schema.NullOr(IsoDateTime),
   /** Newest turn start or end in its chats, kept after those chats are archived or deleted. */
   lastTurnAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** Commits on origin's copy of `baseRef` that the branch lacks; null until first counted. */
+  behindBy: Schema.NullOr(Schema.Int).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
 });
 export type Workspace = typeof Workspace.Type;
 
@@ -207,6 +209,8 @@ export const WorkspaceCommand = Schema.Union([
   Schema.Struct({ type: Schema.Literal("unarchive"), ...WorkspaceRefInput.fields }),
   Schema.Struct({ type: Schema.Literal("retry"), ...WorkspaceRefInput.fields }),
   Schema.Struct({ type: Schema.Literal("runScript"), ...WorkspaceRunScriptInput.fields }),
+  /** Merges origin's latest `baseRef` into the branch. */
+  Schema.Struct({ type: Schema.Literal("updateFromBase"), ...WorkspaceRefInput.fields }),
   Schema.Struct({ type: Schema.Literal("setProjectScripts"), scripts: ProjectWorkspaceScripts }),
   // GitHub CLI reads ride the command RPC too, for the same reason; they change nothing.
   Schema.Struct({
@@ -218,8 +222,13 @@ export const WorkspaceCommand = Schema.Union([
 ]);
 export type WorkspaceCommand = typeof WorkspaceCommand.Type;
 
+/** `needs-agent`: the merge hit conflicts or local changes and was undone, for an agent to redo. */
+export const WorkspaceUpdateOutcome = Schema.Literals(["updated", "up-to-date", "needs-agent"]);
+export type WorkspaceUpdateOutcome = typeof WorkspaceUpdateOutcome.Type;
+
 export const WorkspaceCommandResult = Schema.Struct({
   workspace: Schema.NullOr(Workspace),
+  update: Schema.optional(WorkspaceUpdateOutcome),
   issues: Schema.optional(Schema.Array(WorkspaceIssue)),
   pullRequests: Schema.optional(Schema.Array(WorkspacePullRequest)),
 });

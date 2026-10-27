@@ -707,6 +707,7 @@ describe("WorkspaceService", () => {
         createdAt: "2026-10-19T00:00:00.000Z",
         archivedAt: null,
         lastTurnAt: null,
+        behindBy: null,
       };
       yield* store.save({ workspace: base, archivedThreadIds: [], log: "" });
       yield* store.save({
@@ -798,6 +799,7 @@ describe("WorkspaceService", () => {
           createdAt: at(0),
           archivedAt: null,
           lastTurnAt: null,
+          behindBy: null,
         },
         archivedThreadIds: [],
         log: "",
@@ -851,6 +853,7 @@ describe("WorkspaceService", () => {
         createdAt: "2026-10-19T00:00:00.000Z",
         archivedAt: null,
         lastTurnAt: null,
+        behindBy: null,
       },
       archivedThreadIds: [],
       log: "",
@@ -941,6 +944,73 @@ describe("WorkspaceService", () => {
       yield* awaitWorkspace(service, (workspace) => workspace.branch === "fork/fix-login-redirect");
       const byName = new Map((yield* service.list).map((workspace) => [workspace.name, workspace]));
       assert.equal(byName.get("lima")?.branch, "feature/lima");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(WorkspaceStore.layer.pipe(Layer.provideMerge(servicesLayer(fixture)))),
+    );
+  });
+  it.effect("merges origin's latest target branch, and undoes a merge that conflicts", () => {
+    const fixture = makeFixture();
+    const commit = (cwd: string, file: string, text: string) => {
+      NodeFS.writeFileSync(NodePath.join(cwd, file), text);
+      git(cwd, "add", file);
+      git(cwd, "commit", "-m", `edit ${file}`);
+    };
+    const record = (name: string) => ({
+      workspace: {
+        id: WorkspaceId.make(`ws-${name}`),
+        projectId: fixture.projectId,
+        name,
+        worktreePath: NodePath.join(fixture.root, name),
+        branch: `fork/${name}`,
+        baseRef: "main",
+        status: "ready" as const,
+        pendingOperation: null,
+        error: null,
+        lastScript: null,
+        setupTerminal: null,
+        runningScripts: [],
+        setupPending: false,
+        checkout: { type: "new" as const, startFromOrigin: true },
+        createdAt: "2026-10-19T00:00:00.000Z",
+        archivedAt: null,
+        lastTurnAt: null,
+        behindBy: null,
+      },
+      archivedThreadIds: [],
+      log: "",
+    });
+    const oslo = NodePath.join(fixture.root, "oslo");
+    const lima = NodePath.join(fixture.root, "lima");
+    git(fixture.root, "worktree", "add", "-b", "fork/oslo", oslo, "main");
+    git(fixture.root, "worktree", "add", "-b", "fork/lima", lima, "main");
+    commit(lima, "t3.json", "{}\n");
+    // Stands in for a fetch: origin's main moves on after both branches started.
+    commit(fixture.root, "t3.json", '{ "workspace": {} }\n');
+    commit(fixture.root, "notes.md", "release notes\n");
+    git(fixture.root, "update-ref", "refs/remotes/origin/main", "main");
+
+    return Effect.gen(function* () {
+      const store = yield* WorkspaceStore.WorkspaceStore;
+      yield* store.save(record("oslo"));
+      yield* store.save(record("lima"));
+      const service = yield* WorkspaceService.make;
+
+      const clean = yield* service.updateFromBase(WorkspaceId.make("ws-oslo"));
+      assert.equal(clean.outcome, "updated");
+      assert.equal(clean.workspace.behindBy, 0);
+      assert.isTrue(NodeFS.existsSync(NodePath.join(oslo, "notes.md")));
+      assert.equal(
+        (yield* service.updateFromBase(WorkspaceId.make("ws-oslo"))).outcome,
+        "up-to-date",
+      );
+
+      const conflicted = yield* service.updateFromBase(WorkspaceId.make("ws-lima"));
+      assert.equal(conflicted.outcome, "needs-agent");
+      assert.equal(conflicted.workspace.behindBy, 2);
+      // Undone, so the agent starts from the branch as it was.
+      assert.equal(git(lima, "status", "--porcelain"), "");
+      assert.equal(NodeFS.readFileSync(NodePath.join(lima, "t3.json"), "utf8"), "{}\n");
     }).pipe(
       Effect.scoped,
       Effect.provide(WorkspaceStore.layer.pipe(Layer.provideMerge(servicesLayer(fixture)))),

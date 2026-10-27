@@ -38,6 +38,7 @@ function workspace(overrides: Partial<Workspace> = {}): Workspace {
     createdAt: "2026-10-19T00:00:00.000Z",
     archivedAt: null,
     lastTurnAt: null,
+    behindBy: null,
     ...overrides,
   };
 }

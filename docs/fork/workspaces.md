@@ -66,6 +66,18 @@ reply you have not read shows a blue dot, and its workspace name turns brighter.
 
 Chats without a repository stay in **Chats** at the bottom of the sidebar.
 
+## Stay up to date with the target branch
+
+When the target branch on origin gets commits your workspace's branch doesn't have, the workspace
+shows **↓** and how many, in the sidebar and beside its chat tabs. T3 Code fetches the target
+branch every few minutes and recounts after each reply.
+
+Click it to merge origin's latest target branch into the workspace's branch. It merges rather
+than rebases, so a branch you already pushed or opened a pull request for stays intact. Wait for
+the workspace's agents to finish first. If the merge conflicts, or your uncommitted changes are in
+the way, T3 Code undoes it and starts a new chat in which an agent merges and resolves the
+conflicts.
+
 ## Workspace scripts
 
 Hover a repository in the sidebar and click its cog, or open **Settings → Projects** and pick the

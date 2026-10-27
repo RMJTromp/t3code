@@ -18,6 +18,7 @@ import {
   type WorkspaceLogEvent,
   type WorkspaceScriptKind,
   type WorkspaceStatus,
+  type WorkspaceUpdateOutcome,
 } from "@t3tools/contracts";
 import { formatGeneratedBranchName } from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -69,6 +70,12 @@ export class WorkspaceService extends Context.Service<
     readonly unarchive: (workspaceId: WorkspaceId) => Effect.Effect<Workspace, WorkspaceError>;
     /** Resumes whatever a restart or failure interrupted. */
     readonly retry: (workspaceId: WorkspaceId) => Effect.Effect<Workspace, WorkspaceError>;
+    readonly updateFromBase: (
+      workspaceId: WorkspaceId,
+    ) => Effect.Effect<
+      { readonly workspace: Workspace; readonly outcome: WorkspaceUpdateOutcome },
+      WorkspaceError
+    >;
     readonly list: Effect.Effect<ReadonlyArray<Workspace>>;
     /** Workspaces plus every project's scripts, re-sent whole on each change; both are small. */
     readonly stream: Stream.Stream<WorkspaceStateEvent>;
@@ -539,6 +546,124 @@ export const make = Effect.gen(function* () {
       ),
   );
 
+  /** Commits on origin's copy of the target branch that the branch lacks; null when unknown. */
+  const countBehind = (workspace: Workspace) =>
+    workspace.baseRef === null
+      ? Effect.succeed(null)
+      : runGit(workspace.worktreePath, [
+          "rev-list",
+          "--count",
+          `HEAD..refs/remotes/origin/${workspace.baseRef}`,
+        ]).pipe(
+          Effect.map((result) => {
+            const count = Number.parseInt(result.stdout, 10);
+            return result.ok && Number.isSafeInteger(count) ? count : null;
+          }),
+        );
+
+  const refreshBehind = Effect.fn("WorkspaceService.refreshBehind")(function* (
+    workspaceId: WorkspaceId,
+  ) {
+    const record = records.get(workspaceId);
+    if (record === undefined || record.workspace.status !== "ready") return;
+    const behindBy = yield* countBehind(record.workspace);
+    if (behindBy === record.workspace.behindBy) return;
+    yield* update(workspaceId, (current) => ({
+      ...current,
+      workspace: { ...current.workspace, behindBy },
+    }));
+  });
+
+  const fetchBase = (projectId: ProjectId, baseRef: string) =>
+    loadProject(projectId).pipe(
+      Effect.flatMap((project) =>
+        git.fetchRemote({ cwd: project.workspaceRoot, remoteName: "origin", refName: baseRef }),
+      ),
+    );
+
+  let behindTicks = 0;
+  /** Counts every minute from refs already fetched; fetches each target branch every fifth. */
+  const refreshAllBehind = Effect.gen(function* () {
+    const live = snapshot().filter((workspace) => workspace.status === "ready");
+    if (behindTicks++ % 5 === 0) {
+      const targets = new Map<string, { projectId: ProjectId; baseRef: string }>();
+      for (const { projectId, baseRef } of live) {
+        if (baseRef !== null) targets.set(`${projectId}\n${baseRef}`, { projectId, baseRef });
+      }
+      yield* Effect.forEach(
+        targets.values(),
+        ({ projectId, baseRef }) => fetchBase(projectId, baseRef).pipe(Effect.ignore),
+        { discard: true },
+      );
+    }
+    yield* Effect.forEach(live, (workspace) => refreshBehind(workspace.id).pipe(Effect.ignore), {
+      discard: true,
+    });
+  });
+
+  const refreshBehindForThread = (threadId: ThreadId) =>
+    threads.getThreadShell(threadId).pipe(
+      Effect.flatMap((shell) => {
+        if (shell === null) return Effect.void;
+        const owner = Array.from(records.values()).find(({ workspace }) =>
+          isWorkspaceChat(workspace, shell),
+        );
+        return owner === undefined ? Effect.void : refreshBehind(owner.workspace.id);
+      }),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("workspace behind count skipped", { threadId, cause }),
+      ),
+    );
+
+  const updateFromBase: WorkspaceService["Service"]["updateFromBase"] = (workspaceId) =>
+    locked(
+      workspaceId,
+      Effect.gen(function* () {
+        const { workspace } = yield* get(workspaceId);
+        if (workspace.status !== "ready") {
+          return yield* workspaceError("invalid-state", "Wait for the workspace to be ready.");
+        }
+        const baseRef = workspace.baseRef;
+        if (baseRef === null) {
+          return yield* workspaceError("invalid-state", "This workspace has no target branch.");
+        }
+        if ((yield* memberThreads(workspace)).some(isBusy)) {
+          return yield* workspaceError(
+            "agents-running",
+            "Wait for the agents in this workspace to finish.",
+          );
+        }
+        yield* fetchBase(workspace.projectId, baseRef).pipe(
+          Effect.mapError(gitFailure(`Could not fetch origin/${baseRef}`)),
+        );
+        const behindBy = yield* countBehind(workspace);
+        if (behindBy === null) {
+          return yield* workspaceError("git-failed", `origin/${baseRef} could not be read.`);
+        }
+        let outcome: WorkspaceUpdateOutcome = "up-to-date";
+        if (behindBy > 0) {
+          // A merge, not a rebase: the branch may already be pushed or have a pull request.
+          const merged = yield* runGit(workspace.worktreePath, [
+            "merge",
+            "--no-edit",
+            `refs/remotes/origin/${baseRef}`,
+          ]);
+          if (merged.ok) {
+            outcome = "updated";
+          } else {
+            yield* runGit(workspace.worktreePath, ["merge", "--abort"]);
+            outcome = "needs-agent";
+          }
+        }
+        const after = yield* countBehind(workspace);
+        const updated = yield* update(workspaceId, (current) => ({
+          ...current,
+          workspace: { ...current.workspace, behindBy: after },
+        }));
+        return { workspace: updated, outcome };
+      }),
+    );
+
   /** Kept on the workspace so archiving or deleting the chat does not drop it in the sidebar. */
   const recordTurn = Effect.fn("WorkspaceService.recordTurn")(function* (
     threadId: ThreadId,
@@ -803,6 +928,7 @@ export const make = Effect.gen(function* () {
           createdAt: yield* nowIso,
           archivedAt: null,
           lastTurnAt: null,
+          behindBy: null,
         };
         yield* put({ workspace, archivedThreadIds: [], log: "" });
         yield* fork(workspace.id, "Creating the workspace", provision(workspace.id));
@@ -1323,7 +1449,11 @@ export const make = Effect.gen(function* () {
         Effect.andThen(
           completedAt === null
             ? Effect.void
-            : nameBranchAfterTurn(event.threadId).pipe(Effect.forkIn(backgroundScope)),
+            : nameBranchAfterTurn(event.threadId).pipe(
+                // An agent may have merged or committed; recount from the refs at hand.
+                Effect.andThen(refreshBehindForThread(event.threadId)),
+                Effect.forkIn(backgroundScope),
+              ),
         ),
         Effect.catchCause((cause) =>
           Effect.logWarning("workspace turn tracking skipped", { threadId: event.threadId, cause }),
@@ -1336,7 +1466,14 @@ export const make = Effect.gen(function* () {
     Effect.forkIn(backgroundScope),
   );
 
+  yield* refreshAllBehind.pipe(
+    Effect.repeat(Schedule.spaced("1 minute")),
+    Effect.catchCause((cause) => Effect.logWarning("workspace behind counts stopped", { cause })),
+    Effect.forkIn(backgroundScope),
+  );
+
   return WorkspaceService.of({
+    updateFromBase,
     runProjectScript,
     setProjectScripts,
     listIssues,

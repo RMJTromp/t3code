@@ -70,7 +70,6 @@ it.effect("a new chat in a workspace does not rerun the project's setup action",
   registry.set(workspaceId, ["/worktrees/repo/oslo"], {
     workspaceId,
     status: "ready",
-    awaitingBranchName: null,
   });
 
   return Effect.gen(function* () {

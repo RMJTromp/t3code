@@ -16,6 +16,7 @@ import {
   type Workspace,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -29,12 +30,13 @@ import * as ThreadManagementService from "../../orchestration-v2/ThreadManagemen
 import * as Sqlite from "../../persistence/Sqlite.ts";
 import * as ProcessRunner from "../../processRunner.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
+import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as TerminalManager from "../../terminal/Manager.ts";
+import * as TextGeneration from "../../textGeneration/TextGeneration.ts";
 import { pickCityName } from "./cityNames.ts";
 import {
   forkGuardWorktreeRemoval,
-  forkWorkspaceAwaitsBranchName,
   forkWorkspaceOwnsPath,
   makeWorkspaceOwnershipRegistry,
   WorkspaceOwnership,
@@ -68,7 +70,6 @@ describe("WorkspaceOwnership", () => {
       registry.set(owned, ["/tmp/link/oslo/", "/private/tmp/link/oslo"], {
         workspaceId: owned,
         status: "ready",
-        awaitingBranchName: null,
       });
       const run = <A, E>(effect: Effect.Effect<A, E>) =>
         effect.pipe(Effect.provideService(WorkspaceOwnership, registry));
@@ -83,7 +84,6 @@ describe("WorkspaceOwnership", () => {
       registry.set(owned, ["/tmp/link/oslo"], {
         workspaceId: owned,
         status: "archiving",
-        awaitingBranchName: null,
       });
       yield* run(forkGuardWorktreeRemoval({ cwd: "/repo", path: "/tmp/link/oslo" }));
       // The old real-path spelling no longer maps to anything once re-registered.
@@ -171,6 +171,12 @@ interface Fixture {
   /** Queues into `pendingEvents` until the service subscribes, so start-up timing loses nothing. */
   emit: (event: OrchestrationV2DomainEvent) => void;
   readonly pendingEvents: Array<OrchestrationV2DomainEvent>;
+  readonly messages: Array<{ role: string; text: string; streaming: boolean }>;
+  /** Branch naming answers, in order; each call records the conversation it was given. */
+  readonly branchNameReplies: Array<{ branch: string; inconclusive?: boolean }>;
+  readonly namedConversations: Array<{ cwd: string; message: string }>;
+  readonly renames: Array<{ oldBranch: string; newBranch: string }>;
+  readonly branchUpdated: Deferred.Deferred<OrchestrationV2ServerCommand>;
 }
 
 function makeFixture(): Fixture {
@@ -202,6 +208,11 @@ function makeFixture(): Fixture {
       pending.push(event);
     },
     pendingEvents: pending,
+    messages: [],
+    branchNameReplies: [],
+    namedConversations: [],
+    renames: [],
+    branchUpdated: Deferred.makeUnsafe(),
   };
 }
 
@@ -254,6 +265,11 @@ function servicesLayer(fixture: Fixture) {
           }
           return { worktree: { path: target, refName: input.newRefName ?? input.refName } };
         }),
+      renameBranch: (input) =>
+        Effect.sync(() => {
+          fixture.renames.push({ oldBranch: input.oldBranch, newBranch: input.newBranch });
+          return { branch: input.newBranch };
+        }),
       removeWorktree: (input) =>
         forkGuardWorktreeRemoval(input).pipe(
           Effect.andThen(
@@ -276,6 +292,7 @@ function servicesLayer(fixture: Fixture) {
         ),
       getThreadShell: (threadId) =>
         Effect.sync(() => (fixture.shells.get(threadId)?.shell ?? null) as never),
+      getThreadRecords: () => Effect.sync(() => ({ messages: fixture.messages }) as never),
       streamDomainEvents: Stream.callback<OrchestrationV2DomainEvent>((mailbox) =>
         Effect.sync(() => {
           for (const event of fixture.pendingEvents.splice(0)) Queue.offerUnsafe(mailbox, event);
@@ -288,8 +305,22 @@ function servicesLayer(fixture: Fixture) {
         Effect.sync(() => {
           fixture.dispatched.push(command);
           return { sequence: fixture.dispatched.length, storedEvents: [] };
+        }).pipe(
+          Effect.tap(() =>
+            command.type === "thread.metadata.update"
+              ? Deferred.succeed(fixture.branchUpdated, command)
+              : Effect.void,
+          ),
+        ),
+    }),
+    Layer.mock(TextGeneration.TextGeneration)({
+      generateBranchName: (input) =>
+        Effect.sync(() => {
+          fixture.namedConversations.push({ cwd: input.cwd, message: input.message });
+          return fixture.branchNameReplies.shift() ?? { branch: "", inconclusive: true };
         }),
     }),
+    Layer.mock(ProviderRegistry.ProviderRegistry)({}),
     fakeTerminals(fixture),
     ServerSettings.layerTest({ branchNamePrefix: "fork" }),
     ServerConfig.layerTest(fixture.root, { prefix: "fork-ws-home-" }),
@@ -799,9 +830,8 @@ describe("WorkspaceService", () => {
     );
   });
 
-  it.effect("follows the branch its first message names", () => {
+  it.effect("names the city branch once a finished turn shows the task", () => {
     const fixture = makeFixture();
-    const registry = makeWorkspaceOwnershipRegistry();
     const record = (name: string, branch: string, checkout: Workspace["checkout"]) => ({
       workspace: {
         id: WorkspaceId.make(`ws-${name}`),
@@ -825,6 +855,27 @@ describe("WorkspaceService", () => {
       archivedThreadIds: [],
       log: "",
     });
+    const chat = (name: string, branch: string, pullRequests: ReadonlyArray<unknown> = []) =>
+      fixture.shells.set(`chat-${name}`, {
+        archived: false,
+        shell: {
+          id: ThreadId.make(`chat-${name}`),
+          projectId: fixture.projectId,
+          worktreePath: NodePath.join(fixture.root, name),
+          branch,
+          pullRequests,
+          lineage: { parentThreadId: null, relationshipToParent: null },
+        },
+      });
+    const turnEnded = (name: string) =>
+      fixture.emit({
+        type: "run.updated",
+        threadId: ThreadId.make(`chat-${name}`),
+        payload: {
+          requestedAt: DateTime.makeUnsafe("2026-10-19T01:00:00.000Z"),
+          completedAt: DateTime.makeUnsafe("2026-10-19T02:00:00.000Z"),
+        },
+      } as never);
     const renamed = (name: string, branch: string) =>
       fixture.emit({
         type: "thread.metadata-updated",
@@ -836,32 +887,63 @@ describe("WorkspaceService", () => {
           lineage: { relationshipToParent: null },
         },
       } as never);
-    const awaits = (name: string, branch: string) =>
-      forkWorkspaceAwaitsBranchName(NodePath.join(fixture.root, name), branch).pipe(
-        Effect.provideService(WorkspaceOwnership, registry),
-      );
 
     return Effect.gen(function* () {
       const store = yield* WorkspaceStore.WorkspaceStore;
       yield* store.save(record("oslo", "fork/oslo", { type: "new", startFromOrigin: true }));
       yield* store.save(record("lima", "feature/lima", { type: "branch" }));
+      yield* store.save(record("rome", "fork/rome", { type: "new", startFromOrigin: true }));
+      yield* store.save(record("bern", "fork/bern", { type: "new", startFromOrigin: true }));
+      git(fixture.root, "worktree", "add", "-b", "fork/rome", NodePath.join(fixture.root, "rome"));
+      git(fixture.root, "config", "branch.fork/rome.remote", "origin");
+      chat("oslo", "fork/oslo");
+      chat("lima", "feature/lima");
+      chat("rome", "fork/rome");
+      chat("bern", "fork/bern", [{ number: 7 }]);
+      fixture.messages.push(
+        { role: "user", text: "merge master into this branch", streaming: false },
+        { role: "assistant", text: "Merged master.", streaming: false },
+        { role: "assistant", text: "Still typing", streaming: true },
+      );
+      fixture.branchNameReplies.push(
+        { branch: "", inconclusive: true },
+        { branch: "fork/fix-login-redirect" },
+      );
 
       const service = yield* WorkspaceService.make;
-      assert.isTrue(yield* awaits("oslo", "fork/oslo"));
-      // A branch the user checked out keeps its name.
-      assert.isFalse(yield* awaits("lima", "feature/lima"));
+      // Checked-out, pushed, and pull request branches keep their names; chores wait a turn.
+      turnEnded("lima");
+      turnEnded("rome");
+      turnEnded("bern");
+      turnEnded("oslo");
+      turnEnded("oslo");
+      const update = yield* Deferred.await(fixture.branchUpdated);
+      assert.deepEqual(fixture.renames, [
+        { oldBranch: "fork/oslo", newBranch: "fork/fix-login-redirect" },
+      ]);
+      const oslo = NodePath.join(fixture.root, "oslo");
+      assert.deepEqual(
+        fixture.namedConversations.map((call) => call.cwd),
+        [oslo, oslo],
+      );
+      assert.equal(
+        fixture.namedConversations[0]?.message,
+        "User: merge master into this branch\n\nAgent: Merged master.",
+      );
+      assert.deepInclude(update, {
+        threadId: ThreadId.make("chat-oslo"),
+        branch: "fork/fix-login-redirect",
+        expectedBranch: "fork/oslo",
+      });
 
       renamed("lima", "fork/elsewhere");
       renamed("oslo", "fork/fix-login-redirect");
       yield* awaitWorkspace(service, (workspace) => workspace.branch === "fork/fix-login-redirect");
       const byName = new Map((yield* service.list).map((workspace) => [workspace.name, workspace]));
       assert.equal(byName.get("lima")?.branch, "feature/lima");
-      // Named once, so later chats keep it.
-      assert.isFalse(yield* awaits("oslo", "fork/fix-login-redirect"));
     }).pipe(
       Effect.scoped,
       Effect.provide(WorkspaceStore.layer.pipe(Layer.provideMerge(servicesLayer(fixture)))),
-      Effect.provideService(WorkspaceOwnership, registry),
     );
   });
 });

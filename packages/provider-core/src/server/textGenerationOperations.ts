@@ -6,6 +6,7 @@ import { formatGeneratedBranchName, sanitizeFeatureBranchName } from "@t3tools/s
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
 import type { ProviderTextGeneration } from "./textGeneration.ts";
+import { forkGenerateBranchName } from "./fork/branchNaming.ts"; // fork:workspaces
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
@@ -118,6 +119,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
   const generateBranchName: ProviderTextGeneration["generateBranchName"] = Effect.fn(
     `${name}.generateBranchName`,
   )(function* (input) {
+    if (input.forkConversation) return yield* forkGenerateBranchName(run, input); // fork:workspaces
     const generated = yield* run({
       operation: "generateBranchName",
       cwd: input.cwd,

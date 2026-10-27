@@ -38,7 +38,6 @@ import {
 } from "@t3tools/shared/git";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
-import { forkWorkspaceAwaitsBranchName } from "../fork/workspaces/WorkspaceOwnership.ts"; // fork:workspaces
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
@@ -471,8 +470,7 @@ const make = Effect.gen(function* () {
         worktreePath !== null &&
         branch !== null &&
         initialMessage !== undefined &&
-        (isTemporaryWorktreeBranch(branch) ||
-          (yield* forkWorkspaceAwaitsBranchName(worktreePath, branch))) // fork:workspaces
+        isTemporaryWorktreeBranch(branch)
       ) {
         const oldBranch = branch;
         const worktreeCwd = worktreePath;

@@ -50,10 +50,12 @@ export interface BranchNameGenerationInput {
   message: string;
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
   modelSelection: ModelSelection;
+  forkConversation?: boolean | undefined; // fork:workspaces
 }
 
 export interface BranchNameGenerationResult {
   branch: string;
+  inconclusive?: boolean | undefined; // fork:workspaces
 }
 
 export interface ThreadTitleGenerationInput {

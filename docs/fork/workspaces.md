@@ -32,10 +32,13 @@ Click **+** next to a repository in the sidebar to open the new-workspace compos
 
 T3 Code then creates the workspace: a worktree named after a city, on a new branch that uses your
 **Settings → Source Control → Worktree branch naming** prefix (for example `t3/oslo`), or on the
-branch or pull request you picked. When the workspace's first message is sent, a new branch is
-renamed after the task, like upstream's worktree chats (for example `t3/fix-login-redirect`). The
-name follows your branch naming mode and prefix and comes from your Source Control writer or text
-generation model. The folder keeps its city name, and branches you checked out keep theirs. It opens the first chat right away, and the setup script's
+branch or pull request you picked. A new branch is renamed after the task (for example
+`t3/fix-login-redirect`) when a reply finishes and the chat so far shows what the task is. Setup
+chores you ask for first, such as merging the main branch, building, or running migrations, don't
+name it; the name waits for the message that does. When you point at an issue or link, the name
+comes from what the agent found there. A branch that has been pushed or has a pull request
+keeps its name. The name follows your branch naming mode and prefix and
+comes from your Source Control writer or text generation model. The folder keeps its city name, and branches you checked out keep theirs. It opens the first chat right away, and the setup script's
 output streams live in a terminal in the right panel. Your message is sent once setup finishes. If
 setup fails, it stays in the composer for you to send yourself.
 

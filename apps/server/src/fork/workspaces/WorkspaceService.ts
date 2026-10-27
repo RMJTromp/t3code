@@ -55,6 +55,7 @@ import * as ServerSettings from "../../serverSettings.ts";
 import * as TerminalManager from "../../terminal/Manager.ts";
 import { withWorkspaceLease } from "../../workspace/workspaceLease.ts";
 import { resolveWorktreesDirectory } from "../../worktreesDirectory.ts";
+import { nameWorkspaceBranch } from "./branchNaming.ts";
 import { pickCityName } from "./cityNames.ts";
 import { WorkspaceOwnership } from "./WorkspaceOwnership.ts";
 import { runWorkspaceScript, trimWorkspaceLog } from "./WorkspaceScriptRunner.ts";
@@ -144,7 +145,7 @@ const isBusy = (thread: {
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
-/** A new branch still named after its city gets a real name from the first message. */
+/** A new branch still named after its city waits for a turn that shows the task. */
 export const awaitingBranchName = (workspace: Workspace): string | null =>
   workspace.checkout.type === "new" &&
   workspace.branch !== null &&
@@ -217,11 +218,7 @@ export const make = Effect.gen(function* () {
         workspace.worktreePath,
         ...(realPaths.has(workspace.id) ? [realPaths.get(workspace.id)!] : []),
       ],
-      {
-        workspaceId: workspace.id,
-        status: workspace.status,
-        awaitingBranchName: awaitingBranchName(workspace),
-      },
+      { workspaceId: workspace.id, status: workspace.status },
     );
 
   const recordRealPath = (workspace: Workspace) =>
@@ -476,7 +473,7 @@ export const make = Effect.gen(function* () {
     thread.projectId === workspace.projectId &&
     samePath(thread.worktreePath, workspace.worktreePath);
 
-  /** Upstream's first-message rename moves every chat off the city branch; the workspace follows. */
+  /** Naming moves every chat off the city branch; the workspace follows. */
   const followBranchRename = Effect.fn("WorkspaceService.followBranchRename")(function* (thread: {
     readonly projectId: ProjectId;
     readonly worktreePath: string | null;
@@ -494,6 +491,53 @@ export const make = Effect.gen(function* () {
       }));
     }
   });
+
+  /** A pushed branch, or one with a pull request, keeps its name: a rename would orphan both. */
+  const branchIsPublished = Effect.fn("WorkspaceService.branchIsPublished")(function* (
+    cwd: string,
+    branch: string,
+  ) {
+    if ((yield* runGit(cwd, ["config", "--get", `branch.${branch}.remote`])).ok) return true;
+    const remote = yield* runGit(cwd, [
+      "for-each-ref",
+      "--count=1",
+      "--format=%(refname)",
+      `refs/remotes/*/${branch}`,
+    ]);
+    return remote.stdout.length > 0;
+  });
+
+  // One naming at a time, so a turn that ends mid-naming sees the renamed branch and stops.
+  const namingLock = yield* Semaphore.make(1);
+  /** Each finished turn retries until the model finds a task among the chores. */
+  const nameBranchAfterTurn = Effect.fn("WorkspaceService.nameBranchAfterTurn")(
+    function* (threadId: ThreadId) {
+      const shell = yield* threads.getThreadShell(threadId);
+      if (shell === null || shell.worktreePath === null || shell.branch === null) return;
+      const awaiting = Array.from(records.values()).some(
+        ({ workspace }) =>
+          workspace.status !== "archived" &&
+          awaitingBranchName(workspace) === shell.branch &&
+          isWorkspaceChat(workspace, shell),
+      );
+      if (!awaiting) return;
+      if ((shell.pullRequests?.length ?? 0) > 0 || shell.branchPullRequest) return;
+      if (yield* branchIsPublished(shell.worktreePath, shell.branch)) return;
+      yield* nameWorkspaceBranch({
+        threadId,
+        projectId: shell.projectId,
+        worktreePath: shell.worktreePath,
+        branch: shell.branch,
+      });
+    },
+    (effect, threadId) =>
+      effect.pipe(
+        namingLock.withPermits(1),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("workspace branch naming failed", { threadId, cause }),
+        ),
+      ),
+  );
 
   /** Kept on the workspace so archiving or deleting the chat does not drop it in the sidebar. */
   const recordTurn = Effect.fn("WorkspaceService.recordTurn")(function* (
@@ -1276,6 +1320,11 @@ export const make = Effect.gen(function* () {
       // A start counts when the run is created, an end once it completes; nothing in between.
       if (event.type === "run.updated" && completedAt === null) return Effect.void;
       return recordTurn(event.threadId, DateTime.formatIso(completedAt ?? requestedAt)).pipe(
+        Effect.andThen(
+          completedAt === null
+            ? Effect.void
+            : nameBranchAfterTurn(event.threadId).pipe(Effect.forkIn(backgroundScope)),
+        ),
         Effect.catchCause((cause) =>
           Effect.logWarning("workspace turn tracking skipped", { threadId: event.threadId, cause }),
         ),

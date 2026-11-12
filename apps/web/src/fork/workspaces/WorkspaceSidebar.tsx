@@ -386,15 +386,12 @@ function WorkspaceRow({
     <li
       ref={rowRef}
       className={cn(
-        "group/workspace flex items-center gap-1 rounded-md pr-1 hover:bg-sidebar-row-hover",
+        "group/workspace relative flex h-8 items-center gap-1 rounded-md pr-1 text-sm hover:bg-sidebar-row-hover",
         isActive && "bg-sidebar-row-active",
       )}
     >
-      <button
-        type="button"
-        className="flex h-8 min-w-0 flex-1 cursor-pointer items-center gap-2 px-2 text-left text-sm"
-        onClick={() => void open(environmentId, workspace)}
-      >
+      {/* The name's button covers the row, so the ↓ button can sit inline without nesting. */}
+      <div className="flex min-w-0 flex-1 items-center gap-2 pl-2">
         {working ? (
           <BrailleSpinner className="text-xs" />
         ) : pr ? (
@@ -406,15 +403,17 @@ function WorkspaceRow({
         ) : (
           <GitBranchIcon className="size-3.5 shrink-0 text-muted-foreground" />
         )}
-        <span
+        <button
+          type="button"
           className={cn(
-            "min-w-0 truncate",
+            "min-w-0 cursor-pointer truncate text-left outline-none after:absolute after:inset-0 after:rounded-md focus-visible:after:ring-2 focus-visible:after:ring-inset focus-visible:after:ring-ring",
             unread ? "font-medium text-foreground" : "text-sidebar-muted-foreground",
             isActive && "text-foreground",
           )}
+          onClick={() => void open(environmentId, workspace)}
         >
           {workspace.branch ?? workspace.name}
-        </span>
+        </button>
         {unread ? (
           <span aria-label="Unread" className="size-1.5 shrink-0 rounded-full bg-primary" />
         ) : null}
@@ -422,19 +421,20 @@ function WorkspaceRow({
           <span
             aria-label="Terminal running"
             data-fork-terminal-dot
-            className="size-1.5 shrink-0 rounded-full bg-destructive"
+            className="pointer-events-none size-1.5 shrink-0 rounded-full bg-destructive"
           />
         ) : null}
+        <UpdateFromBaseButton environmentId={environmentId} workspace={workspace} />
         {runningScript ? (
-          <span className="ml-auto max-w-24 shrink-0 truncate text-primary text-xs group-hover/workspace:hidden">
+          <span className="ml-auto max-w-24 shrink-0 truncate pr-1 text-primary text-xs group-hover/workspace:hidden">
             {runningScript.name.toLowerCase()}
           </span>
         ) : (
-          <span className="ml-auto shrink-0 text-muted-foreground/70 text-xs tabular-nums group-hover/workspace:hidden">
+          <span className="ml-auto shrink-0 pr-1 text-muted-foreground/70 text-xs tabular-nums group-hover/workspace:hidden">
             <RelativeTime timestamp={lastActivity} />
           </span>
         )}
-      </button>
+      </div>
       {failed ? (
         <Button
           size="icon-xs"
@@ -445,7 +445,6 @@ function WorkspaceRow({
           <CircleAlertIcon />
         </Button>
       ) : null}
-      <UpdateFromBaseButton environmentId={environmentId} workspace={workspace} />
       {/* Takes the time's place on hover rather than reserving room beside it. */}
       <span className="hidden group-focus-within/workspace:flex group-hover/workspace:flex">
         <Button

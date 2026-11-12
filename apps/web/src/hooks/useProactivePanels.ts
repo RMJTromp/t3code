@@ -1,8 +1,7 @@
 import type { RunId, ScopedThreadRef, ThreadLinkedPullRequest } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useEffect, useRef } from "react";
-import { useDiffPanelStore } from "../diffPanelStore";
-import { FORK_DIFF_OPEN_SCOPE } from "../fork/diff/diffDefaults"; // fork:diff-defaults
+import { forkOpenDiffDefaults } from "../fork/diff/diffDefaults"; // fork:diff-defaults
 import {
   selectActiveRightPanelSurface,
   pullRequestSurface,
@@ -70,6 +69,7 @@ export function useProactivePanels(input: {
   > | null>(null);
   const threadKey = threadRef ? scopedThreadKey(threadRef) : null;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens proactive surfaces in the right panel store as runs and linked PRs change
   useEffect(() => {
     if (threadKey === null || threadRef === null) {
       proactivePanelObservationRef.current = null;
@@ -185,7 +185,7 @@ export function useProactivePanels(input: {
     ) {
       return;
     }
-    useDiffPanelStore.getState().selectGitScope(threadRef, FORK_DIFF_OPEN_SCOPE); // fork:diff-defaults
+    forkOpenDiffDefaults(threadRef); // fork:diff-defaults
     onDiffPanelOpen?.();
   }, [
     activeLatestRun?.runId,

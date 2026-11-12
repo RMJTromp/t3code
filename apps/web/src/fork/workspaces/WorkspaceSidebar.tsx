@@ -30,7 +30,7 @@ import { useClientSettings } from "../../hooks/useSettings";
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
-} from "../../logicalProject";
+} from "@t3tools/client-runtime/state/project-grouping";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useScratchProject } from "../../hooks/useScratchProject";
 import { cn, isMacPlatform } from "../../lib/utils";

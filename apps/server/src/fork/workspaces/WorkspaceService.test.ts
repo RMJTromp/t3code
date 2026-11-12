@@ -650,6 +650,9 @@ describe("WorkspaceService", () => {
     );
     const previousPath = process.env.PATH;
     process.env.PATH = `${bin}${NodePath.delimiter}${previousPath ?? ""}`;
+    const restorePath = () => {
+      process.env.PATH = previousPath;
+    };
     return Effect.gen(function* () {
       const service = yield* WorkspaceService.make;
       const issues = yield* service.listIssues({ projectId: fixture.projectId, query: "crash" });
@@ -675,11 +678,7 @@ describe("WorkspaceService", () => {
       assert.equal(missing.reason, "github-cli-unavailable");
       assert.equal(missing.message, "issue not found");
     }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          process.env.PATH = previousPath;
-        }),
-      ),
+      Effect.ensuring(Effect.sync(restorePath)),
       Effect.scoped,
       Effect.provide(WorkspaceStore.layer.pipe(Layer.provideMerge(servicesLayer(fixture)))),
     );

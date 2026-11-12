@@ -80,7 +80,7 @@ function WorkspaceScriptsEditor({
   };
 
   const flushOnLeave = useEffectEvent(flush);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Leaving the page calls no handler, so only unmount can save the last keystrokes.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Leaving the page calls no handler, so only unmount can save the last keystrokes.
   useEffect(() => () => flushOnLeave(), []);
 
   return (

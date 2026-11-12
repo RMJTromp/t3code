@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { TestClock } from "effect/testing";
 
+import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../../project/ProjectSetupScriptRunner.ts";
 import * as ServerSettings from "../../serverSettings.ts";
@@ -60,8 +61,12 @@ function setupRunnerLayer(opened: Array<string>) {
                 updatedAt: "2026-10-19T00:00:00.000Z",
               };
             }),
+          getShell: () => Effect.succeed("/bin/zsh"),
           subscribe: () => Effect.succeed(() => {}),
           write: () => Effect.void,
+        }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getThreadShell: () => Effect.succeed(null),
         }),
         ServerSettings.layerTest(),
         NodeCrypto.layer,

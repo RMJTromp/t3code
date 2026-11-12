@@ -126,7 +126,7 @@ function WorkspaceLogView({
 }) {
   const log = useWorkspaceLog(environmentId, workspaceId);
   const ref = useRef<HTMLPreElement>(null);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Follow new output like a terminal does, before it paints.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Follow new output like a terminal does, before it paints.
   useLayoutEffect(() => {
     const element = ref.current;
     if (element && log.length > 0) element.scrollTop = element.scrollHeight;

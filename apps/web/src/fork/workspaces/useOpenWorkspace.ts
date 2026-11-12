@@ -3,7 +3,6 @@ import type {
   EnvironmentId,
   ModelSelection,
   ProjectId,
-  ProviderInteractionMode,
   RuntimeMode,
   ThreadId,
   Workspace,
@@ -18,7 +17,7 @@ import { useClientSettings } from "../../hooks/useSettings";
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
-} from "../../logicalProject";
+} from "@t3tools/client-runtime/state/project-grouping";
 import { readProject, readThreadShell, readThreadShells } from "../../state/entities";
 import { newThreadId } from "../../lib/utils";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -30,7 +29,7 @@ import { sameWorkspacePath, threadsForWorkspace, workspaceDraftSlot } from "./lo
 import { forkWorkspaceEnvironment } from "./state";
 
 /** The draft slot upstream's new-thread handler uses for this workspace. */
-export function useWorkspaceDraftKey() {
+function useWorkspaceDraftKey() {
   const groupingSettings = useClientSettings(selectProjectGroupingSettings);
   return (environmentId: EnvironmentId, workspace: Workspace): string | null => {
     const project = readProject(scopeProjectRef(environmentId, workspace.projectId));
@@ -54,7 +53,7 @@ function isOpenWorkspaceDraft(draftId: DraftId, workspace: Workspace): boolean {
 }
 
 /** The workspace's mapped draft that has not been sent yet, if one exists. */
-export function openWorkspaceDraftId(logicalProjectKey: string | null): DraftId | null {
+function openWorkspaceDraftId(logicalProjectKey: string | null): DraftId | null {
   if (logicalProjectKey === null) return null;
   const session = useComposerDraftStore
     .getState()
@@ -132,7 +131,6 @@ export interface WorkspaceCreateOptions {
   readonly reviewComments?: ReadonlyArray<ReviewCommentContext>;
   readonly modelSelection?: ModelSelection;
   readonly runtimeMode?: RuntimeMode;
-  readonly interactionMode?: ProviderInteractionMode;
 }
 
 /**
@@ -168,9 +166,6 @@ export function useCreateWorkspace() {
       }
       if (options.runtimeMode !== undefined) {
         drafts.setRuntimeMode(opened.draftId, options.runtimeMode);
-      }
-      if (options.interactionMode !== undefined) {
-        drafts.setInteractionMode(opened.draftId, options.interactionMode);
       }
       const prompt = options.prompt?.trim() ?? "";
       if (prompt.length > 0) {

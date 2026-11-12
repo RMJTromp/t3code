@@ -18,7 +18,7 @@ import { useClientSettings } from "../../hooks/useSettings";
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
-} from "../../logicalProject";
+} from "@t3tools/client-runtime/state/project-grouping";
 import { useRightPanelStore } from "../../rightPanelStore";
 import { readProject } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";

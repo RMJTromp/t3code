@@ -45,7 +45,7 @@ export const forkWorkspaceEnvironment = {
 };
 
 // A server without the fork answers with an error; treat it as having no workspaces.
-export const environmentWorkspacesAtom = Atom.family((environmentId: EnvironmentId) =>
+const environmentWorkspacesAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get): ReadonlyArray<Workspace> => {
     const result = get(forkWorkspaceEnvironment.workspaces({ environmentId, input: {} }));
     return Option.match(AsyncResult.value(result), {
@@ -60,7 +60,7 @@ const EMPTY_PROJECT_SCRIPTS_ATOM = Atom.make(EMPTY_PROJECT_SCRIPTS).pipe(
   Atom.withLabel("fork:environment-project-scripts:empty"),
 );
 
-export const environmentProjectScriptsAtom = Atom.family((environmentId: EnvironmentId) =>
+const environmentProjectScriptsAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get): ReadonlyArray<ProjectWorkspaceScripts> => {
     const result = get(forkWorkspaceEnvironment.workspaces({ environmentId, input: {} }));
     return Option.match(AsyncResult.value(result), {

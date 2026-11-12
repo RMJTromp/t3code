@@ -1,5 +1,5 @@
 // Lowercase, ASCII, and hyphen-safe so each name is a valid branch and folder.
-export const CITY_NAMES: ReadonlyArray<string> = [
+const CITY_NAMES: ReadonlyArray<string> = [
   "abidjan",
   "abuja",
   "accra",

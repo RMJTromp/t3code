@@ -1,8 +1,9 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
+import { useDiffPanelStore } from "../../diffPanelStore";
 
 /** Every way the diff panel opens lands on uncommitted changes, not the branch range. */
-export const FORK_DIFF_OPEN_SCOPE = "unstaged" as const;
+const FORK_DIFF_OPEN_SCOPE = "unstaged" as const;
 
 const EMPTY_KEYS: ReadonlySet<string> = new Set();
 
@@ -59,7 +60,7 @@ export function useForkDiffFolds(
 }
 
 /** Opening the diff panel starts every file at the default fold again. */
-export function forkResetDiffFolds(threadRef: ScopedThreadRef) {
+function forkResetDiffFolds(threadRef: ScopedThreadRef) {
   // Matches DiffPanel's collapseScopeKey: `${environmentId}:${threadId}:${section}`.
   const prefix = `${threadRef.environmentId}:${threadRef.threadId}:`;
   useFoldExceptions.setState((state) => {
@@ -71,4 +72,10 @@ export function forkResetDiffFolds(threadRef: ScopedThreadRef) {
       ),
     };
   });
+}
+
+/** An untargeted diff open (toggle, + menu, proactive) lands on uncommitted, files at the default fold. */
+export function forkOpenDiffDefaults(threadRef: ScopedThreadRef) {
+  forkResetDiffFolds(threadRef);
+  useDiffPanelStore.getState().selectGitScope(threadRef, FORK_DIFF_OPEN_SCOPE);
 }

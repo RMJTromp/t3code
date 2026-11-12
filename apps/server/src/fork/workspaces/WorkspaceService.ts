@@ -32,7 +32,7 @@ import {
   setupProjectScript,
 } from "@t3tools/shared/projectScripts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -154,7 +154,7 @@ const isBusy = (thread: {
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
 /** A new branch still named after its city waits for a turn that shows the task. */
-export const awaitingBranchName = (workspace: Workspace): string | null =>
+const awaitingBranchName = (workspace: Workspace): string | null =>
   workspace.checkout.type === "new" &&
   workspace.branch !== null &&
   (workspace.branch === workspace.name || workspace.branch.endsWith(`/${workspace.name}`))
@@ -176,11 +176,11 @@ export const make = Effect.gen(function* () {
   const home = yield* HostProcess.HomeDirectory;
   const ownership = yield* WorkspaceOwnership;
   const fileSystem = yield* FileSystem.FileSystem;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
 
   const exists = (target: string) =>
     fileSystem.exists(target).pipe(Effect.orElseSucceed(() => false));
-  const newId = crypto.randomUUIDv4().pipe(Effect.orDie);
+  const newId = random.uuidV4();
   const samePath = (left: string | null, right: string): boolean =>
     left !== null &&
     normalizeWorkspacePath(path.resolve(left)) === normalizeWorkspacePath(path.resolve(right));
@@ -431,7 +431,7 @@ export const make = Effect.gen(function* () {
       onOutput: (text) => appendLog(workspaceId, text),
     }).pipe(
       Effect.provideService(TerminalManager.TerminalManager, terminals),
-      Effect.provideService(Crypto.Crypto, crypto),
+      Effect.provideService(SecureRandom.SecureRandom, random),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
     );
@@ -1331,7 +1331,7 @@ export const make = Effect.gen(function* () {
       onOpened: setRunning(workspace.id, (current) => [...current, running]),
     }).pipe(
       Effect.provideService(TerminalManager.TerminalManager, terminals),
-      Effect.provideService(Crypto.Crypto, crypto),
+      Effect.provideService(SecureRandom.SecureRandom, random),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
       // Ctrl+C or closing the terminal also ends the run.

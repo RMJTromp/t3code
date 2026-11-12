@@ -1,6 +1,6 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { projectScriptTerminalInput } from "@t3tools/shared/projectScripts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -9,7 +9,7 @@ import * as Path from "effect/Path";
 import * as TerminalManager from "../../terminal/Manager.ts";
 
 /** Retained per workspace; older output is dropped from the front. */
-export const WORKSPACE_LOG_MAX_CHARS = 256 * 1024;
+const WORKSPACE_LOG_MAX_CHARS = 256 * 1024;
 const SCRIPT_TIMEOUT = "30 minutes";
 const PARTIAL_LINE_MAX_CHARS = 4_096;
 
@@ -60,7 +60,7 @@ function quoteForShell(value: string, shell: CompletionShell): string {
  * shebang only works when the kernel executes a file. Scripts without one use the user's shell.
  * The screen is cleared first, and the exit-code sentinel is erased once printed.
  */
-export function wrapWorkspaceCommand(
+function wrapWorkspaceCommand(
   scriptPath: string,
   hasShebang: boolean,
   shell: CompletionShell,
@@ -99,9 +99,9 @@ export const runWorkspaceScript = Effect.fn("ForkWorkspaces.runWorkspaceScript")
   const terminals = yield* TerminalManager.TerminalManager;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const shell = completionShell(yield* HostProcess.Platform, yield* HostProcess.Environment);
-  const token = (yield* crypto.randomUUIDv4().pipe(Effect.orDie)).replaceAll("-", "");
+  const token = (yield* random.uuidV4()).replaceAll("-", "");
   const sentinel = `__T3FORK_DONE_${token}:`;
   const sentinelPattern = new RegExp(`${sentinel}(-?\\d+)`);
   const terminalFailure = (error: { readonly message: string }) =>

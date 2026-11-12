@@ -84,7 +84,7 @@ const persistenceError = (message: string) => (cause: unknown) =>
     message: `${message}: ${cause instanceof Error ? cause.message : String(cause)}`,
   });
 
-export const runForkMigrations = Effect.fn("ForkWorkspaces.runForkMigrations")(function* (
+const runForkMigrations = Effect.fn("ForkWorkspaces.runForkMigrations")(function* (
   sql: SqlClient.SqlClient,
 ) {
   yield* sql`
@@ -110,7 +110,7 @@ export const runForkMigrations = Effect.fn("ForkWorkspaces.runForkMigrations")(f
   }
 });
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* runForkMigrations(sql).pipe(
     Effect.mapError(persistenceError("Could not prepare the workspace table")),

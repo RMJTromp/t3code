@@ -2,7 +2,6 @@ import type {
   EnvironmentId,
   ProjectId,
   ProviderDriverKind,
-  ProviderInteractionMode,
   ServerProvider,
 } from "@t3tools/contracts";
 import {
@@ -26,8 +25,8 @@ import { searchSlashCommandItems } from "../../components/chat/composerSlashComm
 import { useComposerTriggerState } from "../../components/chat/useComposerTriggerState";
 import {
   type ComposerPromptEditorHandle,
-  ComposerPromptEditor,
-} from "../../components/ComposerPromptEditor";
+  ComposerPromptEditorTiptap as ComposerPromptEditor,
+} from "../../components/ComposerPromptEditorTiptap";
 import {
   ComposerContextActionsContext,
   composerContextRecordsFromDraft,
@@ -75,9 +74,6 @@ export function NewWorkspacePromptEditor({
   value,
   reviewComments,
   onReviewCommentAdd,
-  planModeEnabled,
-  interactionMode,
-  onInteractionModeChange,
   disabled,
   onChange,
   onSubmit,
@@ -94,10 +90,6 @@ export function NewWorkspacePromptEditor({
   value: string;
   reviewComments: ReadonlyArray<ReviewCommentContext>;
   onReviewCommentAdd: (comment: ReviewCommentContext) => void;
-  /** Offer /plan, /default, and Shift+Tab, which set the new chat's mode. */
-  planModeEnabled: boolean;
-  interactionMode: ProviderInteractionMode;
-  onInteractionModeChange: (mode: ProviderInteractionMode) => void;
   disabled: boolean;
   onChange: (value: string) => void;
   onSubmit: () => void;
@@ -175,26 +167,7 @@ export function NewWorkspacePromptEditor({
     }
     if (providerKind === null) return [];
     if (trigger.kind === "slash-command") {
-      // The chat's /plan and /default set the new chat's mode; /model is left
-      // out, since the footer's model picker covers it.
-      const modeItems = planModeEnabled
-        ? ([
-            {
-              id: "slash:plan",
-              type: "slash-command",
-              command: "plan",
-              label: "/plan",
-              description: "Switch this thread into plan mode",
-            },
-            {
-              id: "slash:default",
-              type: "slash-command",
-              command: "default",
-              label: "/default",
-              description: "Switch this thread back to normal build mode",
-            },
-          ] as const)
-        : [];
+      // /model is left out, since the footer's model picker covers it.
       const slashMenuSkills = getProviderSkillsForSlashMenu(skills, showSkillsInSlashMenu);
       const commandItems = getProviderSlashCommandsForSlashMenu(slashCommands, slashMenuSkills).map(
         (command) => ({
@@ -218,7 +191,7 @@ export function NewWorkspacePromptEditor({
           (skill.scope ? `${skill.scope} skill` : ""),
       }));
       return searchSlashCommandItems(
-        [...modeItems, ...commandItems, ...skillItems],
+        [...commandItems, ...skillItems],
         trigger.query.trim().toLowerCase(),
       );
     }
@@ -309,9 +282,6 @@ export function NewWorkspacePromptEditor({
       onReviewCommentAdd(comment);
     } else if (item.type === "skill") {
       replace(active.rangeStart, active.rangeEnd, `$${item.skill.name} `);
-    } else if (item.type === "slash-command") {
-      replace(active.rangeStart, active.rangeEnd, "");
-      onInteractionModeChange(item.command === "plan" ? "plan" : "default");
     } else if (item.type === "provider-slash-command") {
       replace(active.rangeStart, active.rangeEnd, `/${item.command.name} `);
     }
@@ -326,10 +296,6 @@ export function NewWorkspacePromptEditor({
   };
 
   const onCommandKeyDown = (key: string, event: KeyboardEvent) => {
-    if (key === "Tab" && event.shiftKey && planModeEnabled) {
-      onInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
-      return true;
-    }
     const active = currentTrigger();
     if (key === "Escape" && active !== null) {
       if (event.isComposing) return false;

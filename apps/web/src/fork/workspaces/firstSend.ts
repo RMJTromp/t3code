@@ -49,7 +49,7 @@ export function useWorkspaceFirstSend(draftId: DraftId | null, send: () => unkno
   const workspace = useWorkspaceForPath(draft?.environmentId ?? null, draft?.worktreePath ?? null);
   const status = workspace?.status ?? null;
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- The worktree is created on the server, so the streamed status decides when to send.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- The worktree is created on the server, so the streamed status decides when to send.
   useEffect(() => {
     if (threadId === null || !queued) return;
     if (status === "failed") {

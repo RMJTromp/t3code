@@ -49,7 +49,7 @@ export function TerminalActivityWatcher({ environmentId }: { environmentId: Envi
     }
   });
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- Terminal runs end on the server; the streamed metadata and a threshold timer drive the row dot and sound.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Terminal runs end on the server; the streamed metadata and a threshold timer drive the row dot and sound.
   useEffect(() => {
     const next = advanceTerminalRuns(runs.current, summaries ?? [], Date.now());
     runs.current = next.running;
@@ -64,10 +64,10 @@ export function TerminalActivityWatcher({ environmentId }: { environmentId: Envi
     return () => clearTimeout(timer);
   }, [environmentId, summaries]);
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- A disconnected environment's rows must not keep a stale running dot.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- A disconnected environment's rows must not keep a stale running dot.
   useEffect(() => () => setLongRunningPaths(environmentId, []), [environmentId]);
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- Opening the workspace, by any route, is what marks its finished run seen.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Opening the workspace, by any route, is what marks its finished run seen.
   useEffect(() => {
     if (activePath !== null) clearTerminalFinished(environmentId, activePath);
   }, [environmentId, activePath]);

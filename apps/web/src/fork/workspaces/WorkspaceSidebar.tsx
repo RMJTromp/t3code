@@ -42,6 +42,7 @@ import { openNewWorkspaceDialog, openWorkspaceLog } from "./dialogStore";
 import {
   compactRelativeTime,
   sameWorkspacePath,
+  subagentsByChat,
   threadsForWorkspace,
   unassignedProjectThreads,
   threadLastTurnAt,
@@ -204,6 +205,7 @@ function ProjectGroup({
     (workspace) => workspace.projectId === project.id,
   );
   const projectThreads = threads.filter((thread) => thread.environmentId === project.environmentId);
+  const subagents = subagentsByChat(projectThreads);
   const live = workspaces
     .filter((workspace) => workspace.status !== "archived")
     .map((workspace) => ({
@@ -283,6 +285,7 @@ function ProjectGroup({
               environmentId={project.environmentId}
               workspace={workspace}
               members={threadsForWorkspace(projectThreads, workspace)}
+              subagents={subagents}
               isActive={
                 active.environmentId === project.environmentId &&
                 sameWorkspacePath(active.worktreePath, workspace.worktreePath)
@@ -344,18 +347,20 @@ function WorkspaceRow({
   environmentId,
   workspace,
   members,
+  subagents,
   isActive,
 }: {
   environmentId: EnvironmentId;
   workspace: Workspace;
   members: ReadonlyArray<EnvironmentThreadShell>;
+  subagents: ReadonlyMap<string, ReadonlyArray<EnvironmentThreadShell>>;
   isActive: boolean;
 }) {
   const { open } = useOpenWorkspace();
   const archive = useArchiveWorkspace();
   const siblings = useEnvironmentWorkspaces(environmentId);
   const attentionOf = useThreadAttention();
-  const attention = members.map(attentionOf);
+  const attention = members.map((member) => attentionOf(member, subagents.get(member.id)));
   // Creating, archiving, or a running setup or archive script count as busy, like an agent.
   const working =
     attention.some((entry) => entry.working) ||
@@ -365,6 +370,7 @@ function WorkspaceRow({
     workspace.runningScripts.length > 0;
   const terminal = useWorkspaceTerminalActivity(environmentId, workspace.worktreePath);
   const unread = attention.some((entry) => entry.unread) || terminal.finished;
+  const commandRunning = terminal.longRunning || attention.some((entry) => entry.commandRunning);
   const failed = workspace.status === "failed" || workspace.error !== null;
   const target = { environmentId, workspaceId: workspace.id };
   const runningScript = workspace.runningScripts[0];
@@ -417,9 +423,9 @@ function WorkspaceRow({
         {unread ? (
           <span aria-label="Unread" className="size-1.5 shrink-0 rounded-full bg-primary" />
         ) : null}
-        {terminal.longRunning ? (
+        {commandRunning ? (
           <span
-            aria-label="Terminal running"
+            aria-label="Command running"
             data-fork-terminal-dot
             className="pointer-events-none size-1.5 shrink-0 rounded-full bg-destructive"
           />

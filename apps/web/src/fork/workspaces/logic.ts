@@ -64,6 +64,22 @@ export function owningUserChatId<T extends ThreadLineageCandidate>(
   return null;
 }
 
+/** Unarchived subagent chats by the user chat they descend from, which they keep busy. */
+export function subagentsByChat<T extends WorkspaceThreadCandidate>(
+  threads: ReadonlyArray<T>,
+): ReadonlyMap<T["id"], ReadonlyArray<T>> {
+  const byChat = new Map<T["id"], Array<T>>();
+  for (const thread of threads) {
+    if (isUserChat(thread) || thread.archivedAt !== null) continue;
+    const owner = owningUserChatId(threads, thread.id);
+    if (owner === null) continue;
+    const siblings = byChat.get(owner);
+    if (siblings) siblings.push(thread);
+    else byChat.set(owner, [thread]);
+  }
+  return byChat;
+}
+
 /** A workspace's chats are its project's threads that run in its folder. */
 export function threadsForWorkspace<T extends WorkspaceThreadCandidate>(
   threads: ReadonlyArray<T>,

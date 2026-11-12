@@ -40,6 +40,7 @@ import {
   orderWorkspaceTabs,
   owningUserChatId,
   sameWorkspacePath,
+  subagentsByChat,
   threadsForWorkspace,
   workspaceAcceptsChats,
 } from "./logic";
@@ -104,6 +105,7 @@ function WorkspaceTabStrip({
     (thread) => thread.environmentId === environmentId,
   );
   const members = threadsForWorkspace(environmentThreads, workspace);
+  const subagents = subagentsByChat(environmentThreads);
   // A subagent chat has no tab of its own; its spawning chat's tab stands in for it.
   const activeTabId =
     activeThreadId === null
@@ -308,7 +310,7 @@ function WorkspaceTabStrip({
               );
             }
             const { thread } = tab;
-            const attention = attentionOf(thread);
+            const attention = attentionOf(thread, subagents.get(thread.id));
             return (
               <ChatTab
                 key={thread.id}

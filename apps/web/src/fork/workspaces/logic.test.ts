@@ -12,6 +12,7 @@ import {
   orderWorkspaceTabs,
   owningUserChatId,
   routeNewThread,
+  subagentsByChat,
   threadsForWorkspace,
   unassignedProjectThreads,
   workspaceDraftSlot,
@@ -94,6 +95,23 @@ describe("threadsForWorkspace", () => {
     expect(owningUserChatId(threads, "helper-of-helper")).toBe("lead");
     expect(owningUserChatId(threads, "lead")).toBe("lead");
     expect(owningUserChatId(threads, "orphan")).toBeNull();
+  });
+});
+
+describe("subagentsByChat", () => {
+  it("files nested subagents under the user chat they descend from", () => {
+    const threads = [
+      thread("chat", "/worktrees/repo/oslo"),
+      thread("child", "/worktrees/repo/oslo", { subagentOf: "chat" }),
+      thread("grandchild", "/worktrees/repo/oslo", { subagentOf: "child" }),
+      thread("done", "/worktrees/repo/oslo", {
+        subagentOf: "chat",
+        archivedAt: "2026-10-19T01:00:00.000Z",
+      }),
+    ];
+    const byChat = subagentsByChat(threads);
+    expect(byChat.get("chat")?.map((entry) => entry.id)).toEqual(["child", "grandchild"]);
+    expect(byChat.has("child")).toBe(false);
   });
 });
 

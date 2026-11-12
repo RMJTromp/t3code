@@ -325,3 +325,14 @@ export function isWorkspaceScriptTerminalId(terminalId: string): boolean {
     terminalId.startsWith("script-")
   );
 }
+
+/** What a merge agent is told when origin's target branch conflicts with the workspace. */
+export function workspaceMergePrompt(baseRef: string, options: { readonly push: boolean }): string {
+  return [
+    `Merge the latest \`origin/${baseRef}\` into this branch: run \`git fetch origin ${baseRef}\`, then \`git merge origin/${baseRef}\`.`,
+    "Resolve every conflict so both sides' changes keep working, and keep any uncommitted work.",
+    options.push
+      ? "Run the checks that cover the conflicted files, commit the merge, then push the branch so its pull request updates."
+      : "Run the checks that cover the conflicted files, then commit the merge.",
+  ].join("\n");
+}

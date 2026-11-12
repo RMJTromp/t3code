@@ -92,6 +92,14 @@ the workspace's agents to finish first. If the merge conflicts, or your uncommit
 the way, T3 Code undoes it and starts a new chat in which an agent merges and resolves the
 conflicts.
 
+A workspace whose branch has an open or draft pull request stays up to date by itself. About every
+five minutes, if it is behind and nothing is happening in it (no agent working, no command running
+in its terminals, no uncommitted files), T3 Code merges the target branch in and pushes, so the
+pull request updates. If the merge conflicts, a new chat opens in the workspace with an agent that
+merges, resolves, commits, and pushes. Each new commit on the target branch is tried once, so a
+failed push or merge waits for the next one. This needs the GitHub CLI (`gh`) on the machine
+running T3 Code.
+
 ## Workspace scripts
 
 Hover a repository in the sidebar and click its cog, or open **Settings → Projects** and pick the

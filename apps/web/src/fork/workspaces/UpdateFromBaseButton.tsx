@@ -1,4 +1,9 @@
-import type { EnvironmentId, Workspace, WorkspaceError } from "@t3tools/contracts";
+import {
+  workspaceMergePrompt,
+  type EnvironmentId,
+  type Workspace,
+  type WorkspaceError,
+} from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -19,13 +24,6 @@ const asWorkspaceError = (cause: unknown): WorkspaceError | null =>
   typeof cause === "object" && cause !== null && "_tag" in cause && cause._tag === "WorkspaceError"
     ? (cause as WorkspaceError)
     : null;
-
-const mergePrompt = (baseRef: string) =>
-  [
-    `Merge the latest \`origin/${baseRef}\` into this branch: run \`git fetch origin ${baseRef}\`, then \`git merge origin/${baseRef}\`.`,
-    "Resolve every conflict so both sides' changes keep working, and keep any uncommitted work.",
-    "Run the checks that cover the conflicted files, then commit the merge.",
-  ].join("\n");
 
 /**
  * Merges origin's latest target branch into the workspace. A merge that conflicts is undone on
@@ -63,7 +61,9 @@ function useUpdateFromBase() {
     }
     const opened = await newChat(environmentId, workspace);
     if (opened === null) return;
-    useComposerDraftStore.getState().setPrompt(opened.draftId, mergePrompt(baseRef));
+    useComposerDraftStore
+      .getState()
+      .setPrompt(opened.draftId, workspaceMergePrompt(baseRef, { push: false }));
     queueWorkspaceFirstSend(opened.threadId);
     toastManager.add({
       type: "info",

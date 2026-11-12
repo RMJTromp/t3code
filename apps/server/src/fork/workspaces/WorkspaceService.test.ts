@@ -13,6 +13,7 @@ import {
   WorkspaceId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ServerCommand,
+  type TerminalSummary,
   type Workspace,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -26,6 +27,7 @@ import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../config.ts";
 import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
+import * as ThreadLaunchService from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../../orchestration-v2/ThreadManagementService.ts";
 import * as Sqlite from "../../persistence/Sqlite.ts";
 import * as ProcessRunner from "../../processRunner.ts";
@@ -151,6 +153,10 @@ function fakeTerminals(fixture: Fixture) {
         ),
       ),
     close: () => Effect.void,
+    subscribeMetadata: (listener) =>
+      listener({ type: "snapshot", terminals: fixture.terminalSummaries }).pipe(
+        Effect.as(() => {}),
+      ),
   });
 }
 
@@ -177,6 +183,8 @@ interface Fixture {
   readonly namedConversations: Array<{ cwd: string; message: string }>;
   readonly renames: Array<{ oldBranch: string; newBranch: string }>;
   readonly branchUpdated: Deferred.Deferred<OrchestrationV2ServerCommand>;
+  readonly terminalSummaries: Array<TerminalSummary>;
+  readonly launches: Array<ThreadLaunchService.ThreadLaunchInput>;
 }
 
 function makeFixture(): Fixture {
@@ -213,6 +221,8 @@ function makeFixture(): Fixture {
     namedConversations: [],
     renames: [],
     branchUpdated: Deferred.makeUnsafe(),
+    terminalSummaries: [],
+    launches: [],
   };
 }
 
@@ -318,6 +328,13 @@ function servicesLayer(fixture: Fixture) {
         Effect.sync(() => {
           fixture.namedConversations.push({ cwd: input.cwd, message: input.message });
           return fixture.branchNameReplies.shift() ?? { branch: "", inconclusive: true };
+        }),
+    }),
+    Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+      launch: (input) =>
+        Effect.sync(() => {
+          fixture.launches.push(input);
+          return { threadId: ThreadId.make(`launched-${fixture.launches.length}`) } as never;
         }),
     }),
     Layer.mock(ProviderRegistry.ProviderRegistry)({}),
@@ -1011,6 +1028,125 @@ describe("WorkspaceService", () => {
       assert.equal(git(lima, "status", "--porcelain"), "");
       assert.equal(NodeFS.readFileSync(NodePath.join(lima, "t3.json"), "utf8"), "{}\n");
     }).pipe(
+      Effect.scoped,
+      Effect.provide(WorkspaceStore.layer.pipe(Layer.provideMerge(servicesLayer(fixture)))),
+    );
+  });
+
+  it.effect("keeps an open pull request current, and hands conflicts to an agent once", () => {
+    const fixture = makeFixture();
+    const commit = (cwd: string, file: string, text: string) => {
+      NodeFS.writeFileSync(NodePath.join(cwd, file), text);
+      git(cwd, "add", file);
+      git(cwd, "commit", "-m", `edit ${file}`);
+    };
+    const record = (name: string) => ({
+      workspace: {
+        id: WorkspaceId.make(`ws-${name}`),
+        projectId: fixture.projectId,
+        name,
+        worktreePath: NodePath.join(fixture.root, name),
+        branch: `fork/${name}`,
+        baseRef: "main",
+        status: "ready" as const,
+        pendingOperation: null,
+        error: null,
+        lastScript: null,
+        setupTerminal: null,
+        runningScripts: [],
+        setupPending: false,
+        checkout: { type: "new" as const, startFromOrigin: true },
+        createdAt: "2026-10-19T00:00:00.000Z",
+        archivedAt: null,
+        lastTurnAt: null,
+        behindBy: 2,
+      },
+      archivedThreadIds: [],
+      log: "",
+    });
+    const remote = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "fork-ws-origin-"));
+    git(remote, "init", "--bare", "--initial-branch=main");
+    git(fixture.root, "remote", "add", "origin", remote);
+    git(fixture.root, "push", "origin", "main");
+    const paths = Object.fromEntries(
+      ["oslo", "lima", "rome"].map((name) => {
+        const worktree = NodePath.join(fixture.root, name);
+        git(fixture.root, "worktree", "add", "-b", `fork/${name}`, worktree, "main");
+        return [name, worktree];
+      }),
+    );
+    commit(paths.lima!, "t3.json", "{}\n");
+    for (const worktree of Object.values(paths)) {
+      git(worktree, "push", "-u", "origin", "HEAD");
+    }
+    // origin's main moves on after every branch opened its pull request.
+    commit(fixture.root, "t3.json", '{ "workspace": {} }\n');
+    commit(fixture.root, "notes.md", "release notes\n");
+    git(fixture.root, "push", "origin", "main");
+    fixture.threads = [
+      {
+        id: ThreadId.make("thread-lima"),
+        title: "Lima",
+        worktreePath: paths.lima!,
+        activeRunId: null,
+        archivedAt: null,
+        projectId: fixture.projectId,
+        lineage: { relationshipToParent: null },
+        updatedAt: DateTime.makeUnsafe("2026-10-19T00:00:00.000Z"),
+        modelSelection: { instanceId: "codex", model: "gpt-5" },
+        runtimeMode: "full-access",
+        interactionMode: "plan",
+      } as never,
+    ];
+    // A dev server in rome's terminal keeps it untouched.
+    fixture.terminalSummaries.push({
+      threadId: "thread-rome",
+      terminalId: "default",
+      cwd: paths.rome!,
+      worktreePath: paths.rome!,
+      status: "running",
+      pid: 1,
+      exitCode: null,
+      exitSignal: null,
+      hasRunningSubprocess: true,
+      label: "vp dev",
+      updatedAt: "2026-10-19T00:00:00.000Z",
+    });
+    const bin = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "fork-ws-gh-"));
+    NodeFS.writeFileSync(
+      NodePath.join(bin, "gh"),
+      ["#!/bin/sh", `echo '{"state":"OPEN"}'`].join("\n"),
+      { mode: 0o755 },
+    );
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${bin}${NodePath.delimiter}${previousPath ?? ""}`;
+
+    const restorePath = () => {
+      process.env.PATH = previousPath;
+    };
+    return Effect.gen(function* () {
+      const store = yield* WorkspaceStore.WorkspaceStore;
+      for (const name of ["oslo", "lima", "rome"]) yield* store.save(record(name));
+      const service = yield* WorkspaceService.make;
+
+      yield* service.autoUpdateFromBase;
+      yield* service.autoUpdateFromBase;
+
+      assert.equal(git(remote, "rev-parse", "fork/oslo"), git(paths.oslo!, "rev-parse", "HEAD"));
+      assert.isTrue(NodeFS.existsSync(NodePath.join(paths.oslo!, "notes.md")));
+      assert.isFalse(NodeFS.existsSync(NodePath.join(paths.rome!, "notes.md")));
+      assert.equal(fixture.launches.length, 1);
+      const [launch] = fixture.launches;
+      assert.equal(launch?.interactionMode, "default");
+      assert.equal(launch?.runtimeMode, "full-access");
+      assert.deepEqual(launch?.workspaceStrategy, {
+        type: "existing_worktree",
+        worktreePath: paths.lima!,
+        branch: "fork/lima",
+      });
+      assert.include(launch?.initialMessage?.text ?? "", "push the branch");
+    }).pipe(
+      Effect.ensuring(Effect.sync(restorePath)),
       Effect.scoped,
       Effect.provide(WorkspaceStore.layer.pipe(Layer.provideMerge(servicesLayer(fixture)))),
     );

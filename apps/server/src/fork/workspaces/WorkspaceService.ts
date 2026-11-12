@@ -4,6 +4,7 @@ import {
   WorkspaceError,
   WorkspaceId,
   WorkspaceProjectFileConfig,
+  type OrchestrationV2ThreadShell,
   type ProjectId,
   type ThreadId,
   type Workspace,
@@ -19,8 +20,11 @@ import {
   type WorkspaceScriptKind,
   type WorkspaceStatus,
   type WorkspaceUpdateOutcome,
+  type TerminalMetadataStreamEvent,
+  type TerminalSummary,
   WORKSPACE_ARCHIVE_TERMINAL_ID,
   WORKSPACE_SETUP_TERMINAL_ID,
+  workspaceMergePrompt,
   workspaceScriptTerminalId,
 } from "@t3tools/contracts";
 import { formatGeneratedBranchName } from "@t3tools/shared/git";
@@ -52,6 +56,7 @@ import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../config.ts";
 import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
+import * as ThreadLaunchService from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ProcessRunner from "../../processRunner.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
@@ -79,6 +84,11 @@ export class WorkspaceService extends Context.Service<
       { readonly workspace: Workspace; readonly outcome: WorkspaceUpdateOutcome },
       WorkspaceError
     >;
+    /**
+     * Merges origin's target branch into each workspace with an open pull request while nothing
+     * runs in it, then pushes; a conflict goes to an agent in a new chat. Once per target commit.
+     */
+    readonly autoUpdateFromBase: Effect.Effect<void>;
     readonly list: Effect.Effect<ReadonlyArray<Workspace>>;
     /** Workspaces plus every project's scripts, re-sent whole on each change; both are small. */
     readonly stream: Stream.Stream<WorkspaceStateEvent>;
@@ -114,6 +124,9 @@ const decodeIssues = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Array(WorkspaceIssue)),
 );
 const decodeIssue = Schema.decodeUnknownEffect(Schema.fromJsonString(WorkspaceIssue));
+const decodeGhPullRequestState = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ state: Schema.String })),
+);
 const decodeGhPullRequests = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
     Schema.Array(
@@ -167,6 +180,7 @@ export const make = Effect.gen(function* () {
   const git = yield* GitWorkflowService.GitWorkflowService;
   const projects = yield* ProjectService.ProjectService;
   const threads = yield* ThreadManagementService.ThreadManagementService;
+  const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const terminals = yield* TerminalManager.TerminalManager;
   const processRunner = yield* ProcessRunner.ProcessRunner;
@@ -587,7 +601,8 @@ export const make = Effect.gen(function* () {
   /** Counts every minute from refs already fetched; fetches each target branch every fifth. */
   const refreshAllBehind = Effect.gen(function* () {
     const live = snapshot().filter((workspace) => workspace.status === "ready");
-    if (behindTicks++ % 5 === 0) {
+    const fetching = behindTicks++ % 5 === 0;
+    if (fetching) {
       const targets = new Map<string, { projectId: ProjectId; baseRef: string }>();
       for (const { projectId, baseRef } of live) {
         if (baseRef !== null) targets.set(`${projectId}\n${baseRef}`, { projectId, baseRef });
@@ -601,6 +616,7 @@ export const make = Effect.gen(function* () {
     yield* Effect.forEach(live, (workspace) => refreshBehind(workspace.id).pipe(Effect.ignore), {
       discard: true,
     });
+    if (fetching) yield* autoUpdateFromBase;
   });
 
   const refreshBehindForThread = (threadId: ThreadId) =>
@@ -665,6 +681,159 @@ export const make = Effect.gen(function* () {
         return { workspace: updated, outcome };
       }),
     );
+
+  // Paths of terminals running a command, from the same metadata the clients' red dot reads.
+  const busyTerminals = new Map<string, string>();
+  const trackTerminal = (terminal: TerminalSummary) => {
+    const key = `${terminal.threadId}\u0000${terminal.terminalId}`;
+    if (terminal.status === "running" && terminal.hasRunningSubprocess) {
+      busyTerminals.set(key, terminal.worktreePath ?? terminal.cwd);
+    } else {
+      busyTerminals.delete(key);
+    }
+  };
+  const onTerminalMetadata = (event: TerminalMetadataStreamEvent) =>
+    Effect.sync(() => {
+      if (event.type === "snapshot") {
+        busyTerminals.clear();
+        for (const terminal of event.terminals) trackTerminal(terminal);
+      } else if (event.type === "upsert") {
+        trackTerminal(event.terminal);
+      } else {
+        busyTerminals.delete(`${event.threadId}\u0000${event.terminalId}`);
+      }
+    });
+
+  /** Open covers drafts; a branch without a pull request, or without gh, has none. */
+  const hasOpenPullRequest = (workspace: Workspace) =>
+    processRunner
+      .run({
+        command: "gh",
+        args: ["pr", "view", "--json", "state"],
+        cwd: workspace.worktreePath,
+        timeout: "20 seconds",
+      })
+      .pipe(
+        Effect.map(
+          (output) =>
+            output.code === 0 &&
+            Option.exists(decodeGhPullRequestState(output.stdout), (pr) => pr.state === "OPEN"),
+        ),
+        Effect.orElseSucceed(() => false),
+      );
+
+  /** Pushes to the branch's own upstream, which for a checked-out fork PR is not origin. */
+  const pushBranch = Effect.fn("WorkspaceService.pushBranch")(function* (workspace: Workspace) {
+    const cwd = workspace.worktreePath;
+    const branch = yield* runGit(cwd, ["symbolic-ref", "--short", "HEAD"]);
+    if (!branch.ok) return false;
+    const pushRemote = yield* runGit(cwd, ["config", `branch.${branch.stdout}.pushRemote`]);
+    const remote = pushRemote.ok
+      ? pushRemote
+      : yield* runGit(cwd, ["config", `branch.${branch.stdout}.remote`]);
+    const merge = yield* runGit(cwd, ["config", `branch.${branch.stdout}.merge`]);
+    if (!remote.ok || !merge.ok) return false;
+    const pushed = yield* processRunner
+      .run({
+        command: "git",
+        args: ["push", remote.stdout, `HEAD:${merge.stdout}`],
+        cwd,
+        timeout: "2 minutes",
+        env: { GIT_TERMINAL_PROMPT: "0" },
+      })
+      .pipe(Effect.orElseSucceed(() => ({ code: 1 })));
+    return pushed.code === 0;
+  });
+
+  const launchMergeAgent = Effect.fn("WorkspaceService.launchMergeAgent")(function* (
+    workspace: Workspace,
+    baseRef: string,
+    baseSha: string,
+    members: ReadonlyArray<OrchestrationV2ThreadShell>,
+  ) {
+    // The newest chat's model and access; plan mode would only describe the merge.
+    const latest = members
+      .filter((shell) => isWorkspaceChat(workspace, shell))
+      .reduce<OrchestrationV2ThreadShell | null>(
+        (newest, shell) =>
+          newest === null ||
+          DateTime.toEpochMillis(shell.updatedAt) > DateTime.toEpochMillis(newest.updatedAt)
+            ? shell
+            : newest,
+        null,
+      );
+    if (latest === null) {
+      return yield* Effect.logWarning(
+        "workspace merge agent skipped: no chat to copy a model from",
+        {
+          workspaceId: workspace.id,
+        },
+      );
+    }
+    yield* threadLaunch.launch({
+      commandId: CommandId.make(`fork-auto-update:${workspace.id}:${baseSha}`),
+      projectId: workspace.projectId,
+      title: `Merge origin/${baseRef}`,
+      modelSelection: latest.modelSelection,
+      runtimeMode: latest.runtimeMode,
+      interactionMode: "default",
+      workspaceStrategy: {
+        type: "existing_worktree",
+        worktreePath: workspace.worktreePath,
+        ...(workspace.branch === null ? {} : { branch: workspace.branch }),
+      },
+      initialMessage: { text: workspaceMergePrompt(baseRef, { push: true }), attachments: [] },
+      createdBy: "system",
+      creationSource: "server",
+    });
+  });
+
+  // The target commit each workspace last tried, so a failure is not retried until it moves.
+  const autoUpdatedTo = new Map<WorkspaceId, string>();
+  const autoUpdateWorkspace = Effect.fn("WorkspaceService.autoUpdateWorkspace")(function* (
+    workspace: Workspace,
+  ) {
+    const baseRef = workspace.baseRef;
+    if (workspace.status !== "ready" || workspace.setupPending || baseRef === null) return;
+    if ((workspace.behindBy ?? 0) === 0) return;
+    const cwd = workspace.worktreePath;
+    const base = yield* runGit(cwd, ["rev-parse", `refs/remotes/origin/${baseRef}`]);
+    if (!base.ok || autoUpdatedTo.get(workspace.id) === base.stdout) return;
+    if (Array.from(busyTerminals.values()).some((busy) => samePath(busy, cwd))) return;
+    const members = yield* memberThreads(workspace);
+    if (members.some(isBusy)) return;
+    // Uncommitted files mean someone is working here by hand; wait until they commit.
+    const status = yield* runGit(cwd, ["status", "--porcelain"]);
+    if (!status.ok || status.stdout !== "") return;
+    if (!(yield* hasOpenPullRequest(workspace))) return;
+    autoUpdatedTo.set(workspace.id, base.stdout);
+    const { outcome } = yield* updateFromBase(workspace.id);
+    if (outcome === "updated" && !(yield* pushBranch(workspace))) {
+      yield* Effect.logWarning("workspace merged its target branch but could not push", {
+        workspaceId: workspace.id,
+      });
+    }
+    if (outcome === "needs-agent")
+      yield* launchMergeAgent(workspace, baseRef, base.stdout, members);
+  });
+
+  // The loop and a direct call never sweep at once, so one target commit starts one agent.
+  const autoUpdateLock = yield* Semaphore.make(1);
+  const autoUpdateFromBase: WorkspaceService["Service"]["autoUpdateFromBase"] = Effect.suspend(() =>
+    Effect.forEach(
+      snapshot(),
+      (workspace) =>
+        autoUpdateWorkspace(workspace).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("workspace auto update skipped", {
+              workspaceId: workspace.id,
+              cause,
+            }),
+          ),
+        ),
+      { discard: true },
+    ),
+  ).pipe(autoUpdateLock.withPermits(1));
 
   /** Kept on the workspace so archiving or deleting the chat does not drop it in the sidebar. */
   const recordTurn = Effect.fn("WorkspaceService.recordTurn")(function* (
@@ -1469,6 +1638,9 @@ export const make = Effect.gen(function* () {
     Effect.forkIn(backgroundScope),
   );
 
+  const stopTerminalTracking = yield* terminals.subscribeMetadata(onTerminalMetadata);
+  yield* Effect.addFinalizer(() => Effect.sync(stopTerminalTracking));
+
   yield* refreshAllBehind.pipe(
     Effect.repeat(Schedule.spaced("1 minute")),
     Effect.catchCause((cause) => Effect.logWarning("workspace behind counts stopped", { cause })),
@@ -1477,6 +1649,7 @@ export const make = Effect.gen(function* () {
 
   return WorkspaceService.of({
     updateFromBase,
+    autoUpdateFromBase,
     runProjectScript,
     setProjectScripts,
     listIssues,

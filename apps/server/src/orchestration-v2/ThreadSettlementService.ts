@@ -36,6 +36,7 @@ import * as ProjectStore from "./ProjectStore.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { forkWithoutWorkspaceChats } from "../fork/workspaces/WorkspaceOwnership.ts"; // fork:workspaces
 
 export interface SettlementPullRequest {
   readonly state: "open" | "closed" | "merged";
@@ -321,7 +322,9 @@ export const make = Effect.gen(function* () {
   ) {
     const settings = yield* settingsService.getSettings;
     const automaticSettlementEnabled = autoSettlementConfigured(settings);
-    const threads = yield* projections.getSettlementCandidates(threadId);
+    const threads = yield* forkWithoutWorkspaceChats(
+      yield* projections.getSettlementCandidates(threadId),
+    ); // fork:workspaces
     if (threads.length === 0) return;
     const projectShells = yield* projectStore.listShells();
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);

@@ -16,7 +16,6 @@ import { toastManager } from "../../components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { queueWorkspaceFirstSend } from "./firstSend";
 import { forkWorkspaceEnvironment } from "./state";
 import { useOpenWorkspace } from "./useOpenWorkspace";
 
@@ -31,7 +30,7 @@ const asWorkspaceError = (cause: unknown): WorkspaceError | null =>
  */
 function useUpdateFromBase() {
   const command = useAtomCommand(forkWorkspaceEnvironment.command, { reportFailure: false });
-  const { newChat } = useOpenWorkspace();
+  const { newChat, openThread } = useOpenWorkspace();
   return async (environmentId: EnvironmentId, workspace: Workspace) => {
     const baseRef = workspace.baseRef ?? "the target branch";
     const result = await command({
@@ -59,16 +58,26 @@ function useUpdateFromBase() {
       });
       return;
     }
+    const agentThreadId = result.value.agentThreadId;
+    if (agentThreadId !== undefined) {
+      await openThread(environmentId, agentThreadId);
+      toastManager.add({
+        type: "info",
+        title: `origin/${baseRef} conflicts with ${workspace.name}`,
+        description: "An agent is merging it in a new chat.",
+      });
+      return;
+    }
+    // No chat to copy a model from: the prompt waits in a draft for the user to send.
     const opened = await newChat(environmentId, workspace);
     if (opened === null) return;
     useComposerDraftStore
       .getState()
       .setPrompt(opened.draftId, workspaceMergePrompt(baseRef, { push: false }));
-    queueWorkspaceFirstSend(opened.threadId);
     toastManager.add({
       type: "info",
       title: `origin/${baseRef} conflicts with ${workspace.name}`,
-      description: "An agent is merging it in a new chat.",
+      description: "Send the prompt in the new chat to have an agent merge it.",
     });
   };
 }

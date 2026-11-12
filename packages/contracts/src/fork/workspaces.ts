@@ -19,6 +19,9 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "../baseSchemas.ts";
+import { OrchestrationMessageContext } from "../composerContext.ts";
+import { ModelSelection } from "../modelSelection.ts";
+import { RuntimeMode } from "../providerPolicy.ts";
 
 export const WorkspaceId = TrimmedNonEmptyString.pipe(Schema.brand("WorkspaceId"));
 export type WorkspaceId = typeof WorkspaceId.Type;
@@ -143,6 +146,16 @@ export class WorkspaceError extends Schema.TaggedError<WorkspaceError>()("Worksp
   changedFiles: Schema.optional(Schema.Array(Schema.String)),
 }) {}
 
+/** What the new-workspace composer sends; the server sends it once the workspace exists. */
+export const WorkspaceFirstMessage = Schema.Struct({
+  text: TrimmedNonEmptyString,
+  context: Schema.optional(OrchestrationMessageContext),
+  title: TrimmedNonEmptyString,
+  modelSelection: ModelSelection,
+  runtimeMode: RuntimeMode,
+});
+export type WorkspaceFirstMessage = typeof WorkspaceFirstMessage.Type;
+
 export const WorkspaceCreateInput = Schema.Struct({
   projectId: ProjectId,
   /** The client's draft for this workspace; setup output streams into its terminal. */
@@ -156,6 +169,8 @@ export const WorkspaceCreateInput = Schema.Struct({
       Schema.Struct({ type: Schema.Literal("pullRequest"), number: PositiveInt }),
     ]),
   ),
+  /** Starts `setupThreadId` as a chat with this message, held until setup finishes. */
+  firstMessage: Schema.optional(WorkspaceFirstMessage),
 });
 export type WorkspaceCreateInput = typeof WorkspaceCreateInput.Type;
 
@@ -229,6 +244,8 @@ export type WorkspaceUpdateOutcome = typeof WorkspaceUpdateOutcome.Type;
 export const WorkspaceCommandResult = Schema.Struct({
   workspace: Schema.NullOr(Workspace),
   update: Schema.optional(WorkspaceUpdateOutcome),
+  /** The chat an agent resolves a `needs-agent` merge in. */
+  agentThreadId: Schema.optional(ThreadId),
   issues: Schema.optional(Schema.Array(WorkspaceIssue)),
   pullRequests: Schema.optional(Schema.Array(WorkspacePullRequest)),
 });

@@ -34,9 +34,13 @@ export const makeForkWorkspaceHandlers = Effect.gen(function* () {
         case "runScript":
           return workspaces.runProjectScript(command).pipe(withWorkspace);
         case "updateFromBase":
-          return workspaces
-            .updateFromBase(command.workspaceId)
-            .pipe(Effect.map(({ workspace, outcome }) => ({ workspace, update: outcome })));
+          return workspaces.updateFromBase(command.workspaceId).pipe(
+            Effect.map(({ workspace, outcome, agentThreadId }) => ({
+              workspace,
+              update: outcome,
+              ...(agentThreadId === null ? {} : { agentThreadId }),
+            })),
+          );
         case "setProjectScripts":
           return workspaces.setProjectScripts(command.scripts).pipe(Effect.as({ workspace: null }));
         case "listIssues":

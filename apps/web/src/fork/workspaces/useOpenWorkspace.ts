@@ -1,4 +1,5 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import type {
   EnvironmentId,
   ModelSelection,
@@ -18,11 +19,16 @@ import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
 } from "@t3tools/client-runtime/state/project-grouping";
-import { readProject, readThreadShell, readThreadShells } from "../../state/entities";
+import { buildMessageContext } from "../../lib/composerContextRecords";
+import {
+  readProject,
+  readThreadShell,
+  readThreadShells,
+  waitForThreadShell,
+} from "../../state/entities";
 import { newThreadId } from "../../lib/utils";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { buildThreadRouteParams } from "../../threadRoutes";
-import { queueWorkspaceFirstSend } from "./firstSend";
 import { withForkDraftSlot } from "./interceptNewThread";
 import { useWorkspaceLastLocation } from "./lastLocation";
 import { sameWorkspacePath, threadsForWorkspace, workspaceDraftSlot } from "./logic";
@@ -135,17 +141,35 @@ export interface WorkspaceCreateOptions {
 
 /**
  * Creates a workspace and opens its first chat at once. The chat's thread id
- * is chosen here so the server runs setup in that chat's terminal.
+ * is chosen here so the server runs setup in that chat's terminal. With a
+ * prompt, the server starts that chat with it, so it sends with no client
+ * watching and the composer stays free for the next message.
  */
 export function useCreateWorkspace() {
   const command = useAtomCommand(forkWorkspaceEnvironment.command);
-  const { newChat } = useOpenWorkspace();
+  const { newChat, openThread } = useOpenWorkspace();
   return async (
     environmentId: EnvironmentId,
     projectId: ProjectId,
     options: WorkspaceCreateOptions = {},
   ): Promise<Workspace | null> => {
     const setupThreadId = newThreadId();
+    const prompt = options.prompt?.trim() ?? "";
+    const context = buildMessageContext({
+      terminalContexts: [],
+      reviewComments: options.reviewComments ?? [],
+      previewAnnotations: [],
+    });
+    const firstMessage =
+      prompt.length > 0 && options.modelSelection !== undefined && options.runtimeMode !== undefined
+        ? {
+            text: prompt,
+            title: deriveThreadTitleSeed({ text: prompt, attachments: [] }),
+            modelSelection: options.modelSelection,
+            runtimeMode: options.runtimeMode,
+            ...(context === undefined ? {} : { context }),
+          }
+        : undefined;
     const result = await command({
       environmentId,
       input: {
@@ -154,10 +178,19 @@ export function useCreateWorkspace() {
         setupThreadId,
         ...(options.baseRef === undefined ? {} : { baseRef: options.baseRef }),
         ...(options.checkout === undefined ? {} : { checkout: options.checkout }),
+        ...(firstMessage === undefined ? {} : { firstMessage }),
       },
     });
     const workspace = result._tag === "Success" ? result.value.workspace : null;
     if (workspace === null) return null;
+    if (
+      firstMessage !== undefined &&
+      (await waitForThreadShell(scopeThreadRef(environmentId, setupThreadId)))
+    ) {
+      await openThread(environmentId, setupThreadId);
+      return workspace;
+    }
+    // No server chat: the prompt waits in a draft for the user to send.
     const opened = await newChat(environmentId, workspace, setupThreadId);
     if (opened !== null) {
       const drafts = useComposerDraftStore.getState();
@@ -167,14 +200,12 @@ export function useCreateWorkspace() {
       if (options.runtimeMode !== undefined) {
         drafts.setRuntimeMode(opened.draftId, options.runtimeMode);
       }
-      const prompt = options.prompt?.trim() ?? "";
       if (prompt.length > 0) {
         drafts.setPrompt(opened.draftId, prompt);
         // After the prompt, whose chips already reference them, so none are appended twice.
         if (options.reviewComments !== undefined && options.reviewComments.length > 0) {
           drafts.setReviewComments(opened.draftId, options.reviewComments);
         }
-        queueWorkspaceFirstSend(opened.threadId);
       }
     }
     return workspace;

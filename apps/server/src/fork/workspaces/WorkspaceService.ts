@@ -19,6 +19,7 @@ import {
   type WorkspaceLogEvent,
   type WorkspaceScriptKind,
   type WorkspaceStatus,
+  type WorkspaceFirstMessage,
   type WorkspaceUpdateOutcome,
   type TerminalMetadataStreamEvent,
   type TerminalSummary,
@@ -35,6 +36,7 @@ import {
   resolveProjectScripts,
   setupProjectScript,
 } from "@t3tools/shared/projectScripts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -78,15 +80,20 @@ export class WorkspaceService extends Context.Service<
     readonly unarchive: (workspaceId: WorkspaceId) => Effect.Effect<Workspace, WorkspaceError>;
     /** Resumes whatever a restart or failure interrupted. */
     readonly retry: (workspaceId: WorkspaceId) => Effect.Effect<Workspace, WorkspaceError>;
-    readonly updateFromBase: (
-      workspaceId: WorkspaceId,
-    ) => Effect.Effect<
-      { readonly workspace: Workspace; readonly outcome: WorkspaceUpdateOutcome },
+    /** A merge that conflicts is undone and handed to an agent in a new chat of the workspace. */
+    readonly updateFromBase: (workspaceId: WorkspaceId) => Effect.Effect<
+      {
+        readonly workspace: Workspace;
+        readonly outcome: WorkspaceUpdateOutcome;
+        readonly agentThreadId: ThreadId | null;
+      },
       WorkspaceError
     >;
     /**
-     * Merges origin's target branch into each workspace with an open pull request while nothing
-     * runs in it, then pushes; a conflict goes to an agent in a new chat. Once per target commit.
+     * Keeps each idle workspace with a ready-for-review pull request and nothing unpushed merged
+     * with origin's target branch, and pushes; a conflict goes to an agent. It merges once the
+     * branch has been behind for 5 minutes, at most every 15, and once per target commit. A
+     * workspace whose pull request merged settles its chats and archives itself.
      */
     readonly autoUpdateFromBase: Effect.Effect<void>;
     readonly list: Effect.Effect<ReadonlyArray<Workspace>>;
@@ -124,9 +131,39 @@ const decodeIssues = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Array(WorkspaceIssue)),
 );
 const decodeIssue = Schema.decodeUnknownEffect(Schema.fromJsonString(WorkspaceIssue));
+const GhPullRequestState = Schema.Struct({
+  state: Schema.String,
+  isDraft: Schema.Boolean,
+  mergedAt: Schema.NullOr(Schema.String),
+});
+type GhPullRequestState = typeof GhPullRequestState.Type;
 const decodeGhPullRequestState = Schema.decodeUnknownOption(
-  Schema.fromJsonString(Schema.Struct({ state: Schema.String })),
+  Schema.fromJsonString(GhPullRequestState),
 );
+const PULL_REQUEST_LOOKUP_TTL_MS = 5 * 60_000;
+
+/**
+ * How long a branch must trail its target before merging on its own, and how far apart those
+ * merges stay, so a burst of merges on the target lands as one. Tests shorten them.
+ */
+export const AutoMergeTiming = Context.Reference<{
+  readonly behindForMs: number;
+  readonly intervalMs: number;
+}>("t3/fork/workspaces/AutoMergeTiming", {
+  defaultValue: () => ({ behindForMs: 5 * 60_000, intervalMs: 15 * 60_000 }),
+});
+
+export function autoMergeDue(input: {
+  readonly now: number;
+  readonly behindSince: number;
+  readonly lastMergeAt: number | undefined;
+  readonly timing: typeof AutoMergeTiming.Service;
+}): boolean {
+  return (
+    input.now - input.behindSince >= input.timing.behindForMs &&
+    (input.lastMergeAt === undefined || input.now - input.lastMergeAt >= input.timing.intervalMs)
+  );
+}
 const decodeGhPullRequests = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
     Schema.Array(
@@ -163,6 +200,13 @@ const isBusy = (thread: {
   readonly activeRunId: unknown;
   readonly activityRunStatus?: unknown;
 }): boolean => thread.activeRunId !== null || (thread.activityRunStatus ?? null) !== null;
+
+/** Busy, or still running a background subagent or command after its turn ended. */
+const isBusyInBackground = (thread: {
+  readonly activeRunId: unknown;
+  readonly activityRunStatus?: unknown;
+  readonly pendingBackgroundTasks?: ReadonlyArray<unknown> | undefined;
+}): boolean => isBusy(thread) || (thread.pendingBackgroundTasks?.length ?? 0) > 0;
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -601,8 +645,7 @@ export const make = Effect.gen(function* () {
   /** Counts every minute from refs already fetched; fetches each target branch every fifth. */
   const refreshAllBehind = Effect.gen(function* () {
     const live = snapshot().filter((workspace) => workspace.status === "ready");
-    const fetching = behindTicks++ % 5 === 0;
-    if (fetching) {
+    if (behindTicks++ % 5 === 0) {
       const targets = new Map<string, { projectId: ProjectId; baseRef: string }>();
       for (const { projectId, baseRef } of live) {
         if (baseRef !== null) targets.set(`${projectId}\n${baseRef}`, { projectId, baseRef });
@@ -616,7 +659,7 @@ export const make = Effect.gen(function* () {
     yield* Effect.forEach(live, (workspace) => refreshBehind(workspace.id).pipe(Effect.ignore), {
       discard: true,
     });
-    if (fetching) yield* autoUpdateFromBase;
+    yield* autoUpdateFromBase;
   });
 
   const refreshBehindForThread = (threadId: ThreadId) =>
@@ -633,7 +676,7 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const updateFromBase: WorkspaceService["Service"]["updateFromBase"] = (workspaceId) =>
+  const updateFromBase = (workspaceId: WorkspaceId, options?: { readonly push?: boolean }) =>
     locked(
       workspaceId,
       Effect.gen(function* () {
@@ -645,7 +688,8 @@ export const make = Effect.gen(function* () {
         if (baseRef === null) {
           return yield* workspaceError("invalid-state", "This workspace has no target branch.");
         }
-        if ((yield* memberThreads(workspace)).some(isBusy)) {
+        const members = yield* memberThreads(workspace);
+        if (members.some(isBusy)) {
           return yield* workspaceError(
             "agents-running",
             "Wait for the agents in this workspace to finish.",
@@ -678,7 +722,18 @@ export const make = Effect.gen(function* () {
           ...current,
           workspace: { ...current.workspace, behindBy: after },
         }));
-        return { workspace: updated, outcome };
+        const agentThreadId =
+          outcome === "needs-agent"
+            ? yield* launchMergeAgent(workspace, baseRef, members, options?.push === true).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("workspace merge agent not started", {
+                    workspaceId,
+                    cause,
+                  }).pipe(Effect.as(null)),
+                ),
+              )
+            : null;
+        return { workspace: updated, outcome, agentThreadId };
       }),
     );
 
@@ -704,23 +759,50 @@ export const make = Effect.gen(function* () {
       }
     });
 
-  /** Open covers drafts; a branch without a pull request, or without gh, has none. */
-  const hasOpenPullRequest = (workspace: Workspace) =>
+  /** The branch's pull request, merged or closed ones included; none without gh. */
+  const pullRequestOf = (workspace: Workspace) =>
     processRunner
       .run({
         command: "gh",
-        args: ["pr", "view", "--json", "state"],
+        args: ["pr", "view", "--json", "state,isDraft,mergedAt"],
         cwd: workspace.worktreePath,
         timeout: "20 seconds",
       })
       .pipe(
-        Effect.map(
-          (output) =>
-            output.code === 0 &&
-            Option.exists(decodeGhPullRequestState(output.stdout), (pr) => pr.state === "OPEN"),
+        Effect.map((output) =>
+          output.code === 0 ? decodeGhPullRequestState(output.stdout) : Option.none(),
         ),
-        Effect.orElseSucceed(() => false),
+        Effect.orElseSucceed(() => Option.none()),
       );
+
+  // The sweep runs every minute; gh is asked about each branch at most every five.
+  const pullRequestLookups = new Map<
+    WorkspaceId,
+    { readonly at: number; readonly pr: Option.Option<GhPullRequestState> }
+  >();
+  const recentPullRequestOf = Effect.fn("WorkspaceService.recentPullRequestOf")(function* (
+    workspace: Workspace,
+    options?: { readonly fresh?: boolean },
+  ) {
+    const now = yield* Clock.currentTimeMillis;
+    const cached = pullRequestLookups.get(workspace.id);
+    if (
+      options?.fresh !== true &&
+      cached !== undefined &&
+      now - cached.at < PULL_REQUEST_LOOKUP_TTL_MS
+    ) {
+      return cached.pr;
+    }
+    const pr = yield* pullRequestOf(workspace);
+    pullRequestLookups.set(workspace.id, { at: now, pr });
+    return pr;
+  });
+
+  /** Commits the branch's upstream lacks; a branch without one counts as having them. */
+  const hasUnpushedCommits = (cwd: string) =>
+    runGit(cwd, ["rev-list", "--count", "@{upstream}..HEAD"]).pipe(
+      Effect.map((result) => !result.ok || result.stdout !== "0"),
+    );
 
   /** Pushes to the branch's own upstream, which for a checked-out fork PR is not origin. */
   const pushBranch = Effect.fn("WorkspaceService.pushBranch")(function* (workspace: Workspace) {
@@ -748,8 +830,8 @@ export const make = Effect.gen(function* () {
   const launchMergeAgent = Effect.fn("WorkspaceService.launchMergeAgent")(function* (
     workspace: Workspace,
     baseRef: string,
-    baseSha: string,
     members: ReadonlyArray<OrchestrationV2ThreadShell>,
+    push: boolean,
   ) {
     // The newest chat's model and access; plan mode would only describe the merge.
     const latest = members
@@ -763,15 +845,13 @@ export const make = Effect.gen(function* () {
         null,
       );
     if (latest === null) {
-      return yield* Effect.logWarning(
-        "workspace merge agent skipped: no chat to copy a model from",
-        {
-          workspaceId: workspace.id,
-        },
-      );
+      yield* Effect.logWarning("workspace merge agent skipped: no chat to copy a model from", {
+        workspaceId: workspace.id,
+      });
+      return null;
     }
-    yield* threadLaunch.launch({
-      commandId: CommandId.make(`fork-auto-update:${workspace.id}:${baseSha}`),
+    const launched = yield* threadLaunch.launch({
+      commandId: CommandId.make(`fork-merge-agent:${workspace.id}:${yield* newId}`),
       projectId: workspace.projectId,
       title: `Merge origin/${baseRef}`,
       modelSelection: latest.modelSelection,
@@ -782,39 +862,85 @@ export const make = Effect.gen(function* () {
         worktreePath: workspace.worktreePath,
         ...(workspace.branch === null ? {} : { branch: workspace.branch }),
       },
-      initialMessage: { text: workspaceMergePrompt(baseRef, { push: true }), attachments: [] },
+      initialMessage: { text: workspaceMergePrompt(baseRef, { push }), attachments: [] },
       createdBy: "system",
       creationSource: "server",
     });
+    return launched.threadId;
   });
 
   // The target commit each workspace last tried, so a failure is not retried until it moves.
   const autoUpdatedTo = new Map<WorkspaceId, string>();
+  const autoMergeTiming = yield* AutoMergeTiming;
+  const behindSince = new Map<WorkspaceId, number>();
+  const autoMergedAt = new Map<WorkspaceId, number>();
   const autoUpdateWorkspace = Effect.fn("WorkspaceService.autoUpdateWorkspace")(function* (
     workspace: Workspace,
   ) {
     const baseRef = workspace.baseRef;
     if (workspace.status !== "ready" || workspace.setupPending || baseRef === null) return;
-    if ((workspace.behindBy ?? 0) === 0) return;
+    const behindBy = yield* countBehind(workspace);
+    const now = yield* Clock.currentTimeMillis;
+    if (behindBy === null || behindBy === 0) {
+      behindSince.delete(workspace.id);
+      return;
+    }
+    const since = behindSince.get(workspace.id) ?? now;
+    behindSince.set(workspace.id, since);
+    const lastMergeAt = autoMergedAt.get(workspace.id);
+    if (!autoMergeDue({ now, behindSince: since, lastMergeAt, timing: autoMergeTiming })) return;
     const cwd = workspace.worktreePath;
     const base = yield* runGit(cwd, ["rev-parse", `refs/remotes/origin/${baseRef}`]);
     if (!base.ok || autoUpdatedTo.get(workspace.id) === base.stdout) return;
     if (Array.from(busyTerminals.values()).some((busy) => samePath(busy, cwd))) return;
-    const members = yield* memberThreads(workspace);
-    if (members.some(isBusy)) return;
-    // Uncommitted files mean someone is working here by hand; wait until they commit.
+    if ((yield* memberThreads(workspace)).some(isBusyInBackground)) return;
+    // Uncommitted files or unpushed commits mean work is in progress; wait until it is pushed.
     const status = yield* runGit(cwd, ["status", "--porcelain"]);
     if (!status.ok || status.stdout !== "") return;
-    if (!(yield* hasOpenPullRequest(workspace))) return;
+    if (yield* hasUnpushedCommits(cwd)) return;
+    const readyForReview = (pr: Option.Option<GhPullRequestState>) =>
+      Option.exists(pr, ({ state, isDraft }) => state === "OPEN" && !isDraft);
+    if (!readyForReview(yield* recentPullRequestOf(workspace))) return;
+    // A merge moves the target ahead of the branch, often before the cache sees it merged;
+    // merging that target back in would push to a finished branch.
+    if (!readyForReview(yield* recentPullRequestOf(workspace, { fresh: true }))) return;
     autoUpdatedTo.set(workspace.id, base.stdout);
-    const { outcome } = yield* updateFromBase(workspace.id);
+    autoMergedAt.set(workspace.id, now);
+    behindSince.delete(workspace.id);
+    const { outcome } = yield* updateFromBase(workspace.id, { push: true });
     if (outcome === "updated" && !(yield* pushBranch(workspace))) {
       yield* Effect.logWarning("workspace merged its target branch but could not push", {
         workspaceId: workspace.id,
       });
     }
-    if (outcome === "needs-agent")
-      yield* launchMergeAgent(workspace, baseRef, base.stdout, members);
+  });
+
+  // Workspaces whose archive started after their pull request merged, so a failed archive
+  // script is not rerun every sweep.
+  const archivedAfterMerge = new Set<WorkspaceId>();
+  const archiveIfMerged = Effect.fn("WorkspaceService.archiveIfMerged")(function* (
+    workspace: Workspace,
+  ) {
+    if (workspace.status !== "ready" || archivedAfterMerge.has(workspace.id)) return;
+    const pr = yield* recentPullRequestOf(workspace);
+    // A branch whose pull request merged before the workspace existed is being reused.
+    const mergedAt = Option.getOrNull(pr)?.mergedAt;
+    if (mergedAt == null || Date.parse(mergedAt) < Date.parse(workspace.createdAt)) return;
+    const members = yield* memberThreads(workspace);
+    if (members.some(isBusyInBackground)) return;
+    for (const chat of members) {
+      if (!isWorkspaceChat(workspace, chat) || chat.archivedAt !== null) continue;
+      if (chat.settledAt !== null) continue;
+      yield* threads.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make(`fork-workspace-merged:${chat.id}:${yield* newId}`),
+        threadId: chat.id,
+      });
+    }
+    // Uncommitted files refuse the archive; it retries on the next sweep.
+    yield* archive({ workspaceId: workspace.id });
+    archivedAfterMerge.add(workspace.id);
+    appendLog(workspace.id, "Its pull request merged, so the workspace archived itself.\n");
   });
 
   // The loop and a direct call never sweep at once, so one target commit starts one agent.
@@ -823,7 +949,11 @@ export const make = Effect.gen(function* () {
     Effect.forEach(
       snapshot(),
       (workspace) =>
-        autoUpdateWorkspace(workspace).pipe(
+        archiveIfMerged(workspace).pipe(
+          Effect.andThen(() => {
+            const current = records.get(workspace.id)?.workspace;
+            return current?.status === "ready" ? autoUpdateWorkspace(current) : Effect.void;
+          }),
           Effect.catchCause((cause) =>
             Effect.logWarning("workspace auto update skipped", {
               workspaceId: workspace.id,
@@ -995,6 +1125,18 @@ export const make = Effect.gen(function* () {
         ...record,
         workspace: { ...record.workspace, baseRef, branch },
       }));
+      // A pull request's branch is known only now; the first chat started without one.
+      const firstChat = workspace.setupTerminal?.threadId;
+      if (checkout.type === "pullRequest" && branch !== null && firstChat !== undefined) {
+        yield* threads
+          .dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make(`fork-workspace-branch:${workspaceId}`),
+            threadId: firstChat,
+            branch,
+          })
+          .pipe(Effect.ignore);
+      }
     }
     yield* recordRealPath(workspace);
     yield* setStatus(workspaceId, "ready", { pendingOperation: null, error: null });
@@ -1023,11 +1165,42 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  /** The composer's prompt, held in the preparing run until setup finishes, no client needed. */
+  const startFirstChat = Effect.fn("WorkspaceService.startFirstChat")(function* (
+    workspace: Workspace,
+    threadId: ThreadId,
+    message: WorkspaceFirstMessage,
+  ) {
+    yield* threadLaunch.launch({
+      commandId: CommandId.make(`fork-workspace-first-chat:${workspace.id}`),
+      threadId,
+      projectId: workspace.projectId,
+      title: message.title,
+      generateTitle: true,
+      modelSelection: message.modelSelection,
+      runtimeMode: message.runtimeMode,
+      interactionMode: "default",
+      workspaceStrategy: {
+        type: "existing_worktree",
+        worktreePath: workspace.worktreePath,
+        ...(workspace.branch === null ? {} : { branch: workspace.branch }),
+      },
+      initialMessage: {
+        text: message.text,
+        attachments: [],
+        ...(message.context === undefined ? {} : { context: message.context }),
+      },
+      createdBy: "user",
+      creationSource: "web",
+    });
+  });
+
   const create: WorkspaceService["Service"]["create"] = ({
     projectId,
     setupThreadId,
     baseRef,
     checkout,
+    firstMessage,
   }) =>
     createLock.withPermits(1)(
       Effect.gen(function* () {
@@ -1103,6 +1276,17 @@ export const make = Effect.gen(function* () {
         };
         yield* put({ workspace, archivedThreadIds: [], log: "" });
         yield* fork(workspace.id, "Creating the workspace", provision(workspace.id));
+        if (firstMessage !== undefined && setupThreadId !== undefined) {
+          // The workspace exists either way; without the chat, the client keeps the prompt.
+          yield* startFirstChat(workspace, setupThreadId, firstMessage).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("workspace first chat not started", {
+                workspaceId: workspace.id,
+                cause,
+              }),
+            ),
+          );
+        }
         return workspace;
       }),
     );

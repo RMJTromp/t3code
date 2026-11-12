@@ -7,9 +7,10 @@ side by side. Each one is a git worktree named after a city, such as `oslo`.
 
 Click **+** next to a repository in the sidebar to open the new-workspace composer:
 
-- **What do you want to work on?** becomes the workspace's first message. Leave it empty to
-  open an empty chat instead. The footer picks that chat's model, reasoning, and access, like the
-  chat composer.
+- **What do you want to work on?** becomes the workspace's first message. It is sent right away
+  and starts once setup finishes, even if you close the chat or the app, and the chat's composer
+  stays empty so you can queue the next message behind it. Leave it empty to open an empty chat
+  instead. The footer picks that chat's model, reasoning, and access, like the chat composer.
 - The message box works like the chat composer: Markdown formats as you type, `@` mentions files
   from the repository, `#` tags an open pull request or issue, and `$` or `/` insert the chosen
   agent's skills and commands. Files are
@@ -63,8 +64,12 @@ it, close it, or close the others.
 Once a workspace's branch has a pull request, the branch icon beside it in the sidebar shows the
 pull request's state: green when open, gray as a draft, purple once merged, and red when closed.
 
-While an agent works, its tab and the workspace in the sidebar show a small spinner. A chat with a
-reply you have not read shows a blue dot, and its workspace name turns brighter.
+While an agent works, its tab and the workspace in the sidebar show a small spinner. That includes
+setup before a first message, and subagents still running after the main agent's reply. A chat
+with a reply you have not read shows a blue dot, and its workspace name turns brighter.
+
+Workspace chats don't settle on their own after a while, whatever **Settings** says about
+settling. They stay until you delete them or the workspace's pull request merges.
 
 Chats without a repository stay in **Chats** at the bottom of the sidebar.
 
@@ -72,7 +77,8 @@ Chats without a repository stay in **Chats** at the bottom of the sidebar.
 
 When a command in one of a workspace's terminals has been running for more than 5 seconds, a red
 dot with a slow pulse appears beside the workspace's name. Script terminals (setup, archive, and
-**Run script**) count too, so a running dev server keeps it on.
+**Run script**) count too, so a running dev server keeps it on. The dot also shows while an
+agent has a command running in the background, such as one it waits on after its reply.
 
 If the command ran for at least 30 seconds and you are in another workspace when it finishes, the
 workspace gets the blue unread dot until you open it. Its place in the sidebar doesn't change.
@@ -92,13 +98,19 @@ the workspace's agents to finish first. If the merge conflicts, or your uncommit
 the way, T3 Code undoes it and starts a new chat in which an agent merges and resolves the
 conflicts.
 
-A workspace whose branch has an open or draft pull request stays up to date by itself. About every
-five minutes, if it is behind and nothing is happening in it (no agent working, no command running
-in its terminals, no uncommitted files), T3 Code merges the target branch in and pushes, so the
-pull request updates. If the merge conflicts, a new chat opens in the workspace with an agent that
+A workspace whose branch has an open pull request that is ready for review (not a draft) stays up
+to date by itself. Once the branch has been behind for five minutes, so a run of merges on the
+target lands as one, T3 Code merges the target branch in and pushes, so the pull request updates.
+It merges at most once every 15 minutes, and only while nothing is happening in the workspace (no
+agent or subagent working, no command running, no uncommitted files, no commits you haven't
+pushed). If the merge conflicts, a new chat opens in the workspace with an agent that
 merges, resolves, commits, and pushes. Each new commit on the target branch is tried once, so a
 failed push or merge waits for the next one. This needs the GitHub CLI (`gh`) on the machine
 running T3 Code.
+
+Once the pull request merges, T3 Code settles the workspace's chats and archives the workspace,
+running its archive script, within about five minutes. It waits while an agent is still working,
+and leaves the workspace alone if it has uncommitted files.
 
 ## Workspace scripts
 

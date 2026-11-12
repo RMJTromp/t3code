@@ -233,7 +233,6 @@ import {
   useComposerDraftStore,
   DraftId,
 } from "../composerDraftStore";
-import { useWorkspaceFirstSend } from "../fork/workspaces/firstSend"; // fork:workspaces
 import { WorkspaceTabs } from "../fork/workspaces/WorkspaceTabs"; // fork:workspaces
 import { type TerminalContextDraft } from "../lib/terminalContext";
 import { collectInlineContextIds } from "../lib/composerContextReferences";
@@ -3194,7 +3193,6 @@ export default function ChatView(props: ChatViewProps) {
     runShellCommand: runSideChatShellCommandStable,
   };
 
-  useWorkspaceFirstSend(draftId, () => onSend()); // fork:workspaces
   if (!activeThread) {
     return embedded ? null : <NoActiveThreadState />;
   }

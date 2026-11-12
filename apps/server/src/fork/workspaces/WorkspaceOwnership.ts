@@ -87,6 +87,25 @@ export const forkWorkspaceSetupSettled = (path: string): Effect.Effect<boolean> 
     Effect.andThen(registry.awaitSetup(path), forkWorkspaceOwnsPath(path)),
   );
 
+/** A live workspace's chats settle when its pull request merges, not by upstream's rules. */
+export const forkWithoutWorkspaceChats = <
+  T extends {
+    readonly worktreePath: string | null;
+    readonly lineage: { readonly relationshipToParent: string | null };
+  },
+>(
+  threads: ReadonlyArray<T>,
+): Effect.Effect<ReadonlyArray<T>> =>
+  Effect.map(Effect.service(WorkspaceOwnership), (registry) =>
+    threads.filter((thread) => {
+      if (thread.lineage.relationshipToParent === "subagent" || thread.worktreePath === null) {
+        return true;
+      }
+      const owner = registry.ownerOf(thread.worktreePath);
+      return owner === null || owner.status === "archived";
+    }),
+  );
+
 /** Only the workspace's own archive may remove its checkout. */
 export const forkGuardWorktreeRemoval = (input: {
   readonly cwd: string;

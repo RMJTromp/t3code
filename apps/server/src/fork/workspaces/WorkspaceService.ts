@@ -141,6 +141,11 @@ const decodeGhPullRequestState = Schema.decodeUnknownOption(
   Schema.fromJsonString(GhPullRequestState),
 );
 const PULL_REQUEST_LOOKUP_TTL_MS = 5 * 60_000;
+const decodeGhPullRequestHead = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({ headRefName: Schema.String, isCrossRepository: Schema.Boolean }),
+  ),
+);
 
 /**
  * How long a branch must trail its target before merging on its own, and how far apart those
@@ -1165,6 +1170,27 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  /** The local branch a pull request checks out on; null when gh cannot say. */
+  const pullRequestBranch = Effect.fn("WorkspaceService.pullRequestBranch")(function* (
+    projectId: ProjectId,
+    root: string,
+    number: number,
+  ) {
+    const output = yield* runGh(projectId, [
+      "pr",
+      "view",
+      String(number),
+      "--json",
+      "headRefName,isCrossRepository",
+    ]).pipe(Effect.option);
+    const head = Option.flatMap(output, decodeGhPullRequestHead);
+    if (Option.isNone(head)) return null;
+    const { headRefName, isCrossRepository } = head.value;
+    // A fork's default branch checks out under its owner's name, so it cannot collide.
+    if (isCrossRepository && headRefName === (yield* resolveDefaultBranch(root))) return null;
+    return headRefName;
+  });
+
   /** The composer's prompt, held in the preparing run until setup finishes, no client needed. */
   const startFirstChat = Effect.fn("WorkspaceService.startFirstChat")(function* (
     workspace: Workspace,
@@ -1205,12 +1231,18 @@ export const make = Effect.gen(function* () {
     createLock.withPermits(1)(
       Effect.gen(function* () {
         const project = yield* loadProject(projectId);
-        if (checkout?.type === "branch") {
-          const holder = yield* checkedOutAt(project.workspaceRoot, checkout.branch);
+        const branchToCheckOut =
+          checkout?.type === "branch"
+            ? checkout.branch
+            : checkout?.type === "pullRequest"
+              ? yield* pullRequestBranch(projectId, project.workspaceRoot, checkout.number)
+              : null;
+        if (branchToCheckOut !== null) {
+          const holder = yield* checkedOutAt(project.workspaceRoot, branchToCheckOut);
           if (holder !== null) {
             return yield* workspaceError(
               "invalid-state",
-              `${checkout.branch} is already checked out at ${holder}.`,
+              `${branchToCheckOut} is already checked out at ${holder}.`,
             );
           }
         }

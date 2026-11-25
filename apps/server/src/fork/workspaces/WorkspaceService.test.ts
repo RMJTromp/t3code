@@ -683,6 +683,17 @@ describe("WorkspaceService", () => {
 
   it.live("checks out a pull request in its own workspace", () => {
     const fixture = makeFixture();
+    const bin = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "fork-ws-gh-"));
+    NodeFS.writeFileSync(
+      NodePath.join(bin, "gh"),
+      `#!/bin/sh\necho '{"headRefName":"pr-'"$3"'","isCrossRepository":false}'\n`,
+      { mode: 0o755 },
+    );
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${bin}${NodePath.delimiter}${previousPath ?? ""}`;
+    const restorePath = () => {
+      process.env.PATH = previousPath;
+    };
     return Effect.gen(function* () {
       const service = yield* WorkspaceService.make;
       const created = yield* service.create({
@@ -698,7 +709,16 @@ describe("WorkspaceService", () => {
       assert.equal(ready.branch, "pr-42");
       assert.deepEqual(ready.checkout, { type: "pullRequest", number: 42 });
       assert.equal(git(ready.worktreePath, "rev-parse", "--abbrev-ref", "HEAD"), "pr-42");
+
+      const elsewhere = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "fork-ws-elsewhere-"));
+      git(fixture.root, "worktree", "add", "-b", "pr-43", "--", elsewhere, "main");
+      const taken = yield* service
+        .create({ projectId: fixture.projectId, checkout: { type: "pullRequest", number: 43 } })
+        .pipe(Effect.flip);
+      assert.equal(taken.reason, "invalid-state");
+      assert.include(taken.message, NodeFS.realpathSync(elsewhere));
     }).pipe(
+      Effect.ensuring(Effect.sync(restorePath)),
       Effect.scoped,
       Effect.provide(WorkspaceStore.layer.pipe(Layer.provideMerge(servicesLayer(fixture)))),
     );

@@ -61,6 +61,7 @@ function setupRunnerLayer(opened: Array<string>) {
                 updatedAt: "2026-10-19T00:00:00.000Z",
               };
             }),
+          close: () => Effect.void,
           getShell: () => Effect.succeed("/bin/zsh"),
           subscribe: () => Effect.succeed(() => {}),
           write: () => Effect.void,

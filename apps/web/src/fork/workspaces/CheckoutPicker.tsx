@@ -107,7 +107,7 @@ export function CheckoutPicker({
   const pullRequests = fallBackToUpstream
     ? {
         items: upstreamPullRequests.data?.entries ?? [],
-        error: upstreamPullRequests.error,
+        error: upstreamPullRequests.error?.message ?? null,
         isPending: upstreamPullRequests.isPending && upstreamPullRequests.data === null,
       }
     : ghPullRequests;

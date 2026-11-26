@@ -317,6 +317,7 @@ export function NewWorkspacePromptEditor({
     const intent = composerSubmissionIntentForKey({
       event,
       keybindings,
+      context: {},
       isSoftwareKeyboardOpen: false,
       isDraftThread: true,
       ...(sendShortcut === undefined ? {} : { sendShortcut }),

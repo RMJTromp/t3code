@@ -333,14 +333,16 @@ function servicesLayer(fixture: Fixture) {
         ),
     }),
     Layer.mock(ThreadManagementService.ThreadManagementService)({
-      listProjectThreads: () => Effect.sync(() => fixture.threads as never),
       getShellSnapshot: (options) =>
         Effect.sync(
           () =>
             ({
-              threads: Array.from(fixture.shells.values())
-                .filter((entry) => entry.archived === (options?.location === "archive"))
-                .map((entry) => entry.shell),
+              threads:
+                options?.worktreePath === undefined
+                  ? Array.from(fixture.shells.values())
+                      .filter((entry) => entry.archived === (options?.location === "archive"))
+                      .map((entry) => entry.shell)
+                  : fixture.threads,
             }) as never,
         ),
       getThreadShell: (threadId) =>
@@ -456,6 +458,7 @@ describe("WorkspaceService", () => {
         worktreePath: `${ready.worktreePath}/`,
         activeRunId: null,
         archivedAt: null,
+        lineage: { relationshipToParent: null },
       } as const;
       fixture.threads = [
         member,

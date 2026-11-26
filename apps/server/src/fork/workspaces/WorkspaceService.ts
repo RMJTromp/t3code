@@ -529,14 +529,25 @@ export const make = Effect.gen(function* () {
   });
 
   const memberThreads = (workspace: Workspace) =>
-    threads.listProjectThreads({ projectId: workspace.projectId, includeSubagents: true }).pipe(
-      Effect.map((shells) =>
-        shells.filter((shell) => samePath(shell.worktreePath, workspace.worktreePath)),
-      ),
-      Effect.mapError(() =>
-        workspaceError("invalid-state", "Could not read the workspace's chats."),
-      ),
-    );
+    threads
+      .getShellSnapshot({
+        location: "active",
+        projectId: workspace.projectId,
+        worktreePath: workspace.worktreePath,
+      })
+      .pipe(
+        // The snapshot also carries the threads its forks came from, wherever they ran.
+        Effect.map(({ threads: shells }) =>
+          shells.filter(
+            (shell) =>
+              shell.lineage.sideChat !== true &&
+              samePath(shell.worktreePath, workspace.worktreePath),
+          ),
+        ),
+        Effect.mapError(() =>
+          workspaceError("invalid-state", "Could not read the workspace's chats."),
+        ),
+      );
 
   const isWorkspaceChat = (
     workspace: Workspace,

@@ -1213,7 +1213,7 @@ describe("WorkspaceService", () => {
           "#!/bin/sh",
           // kyiv's pull request is still a draft.
           'if [ "$(basename "$(pwd)")" = kyiv ]; then draft=true; else draft=false; fi',
-          `echo "{\\"state\\":\\"OPEN\\",\\"isDraft\\":$draft,\\"mergedAt\\":null}"`,
+          `echo "{\\"state\\":\\"OPEN\\",\\"isDraft\\":$draft,\\"mergedAt\\":null,\\"baseRefName\\":\\"main\\"}"`,
         ].join("\n"),
         { mode: 0o755 },
       );
@@ -1256,6 +1256,104 @@ describe("WorkspaceService", () => {
     },
   );
 
+  it.effect(
+    "counts a stacked branch against its pull request's base, and pushes only a lone merge",
+    () => {
+      const fixture = makeFixture();
+      const commit = (cwd: string, file: string, text: string) => {
+        NodeFS.writeFileSync(NodePath.join(cwd, file), text);
+        git(cwd, "add", file);
+        git(cwd, "commit", "-m", `edit ${file}`);
+      };
+      const remote = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "fork-ws-origin-"));
+      git(remote, "init", "--bare", "--initial-branch=main");
+      git(fixture.root, "remote", "add", "origin", remote);
+      git(fixture.root, "push", "origin", "main");
+      git(fixture.root, "branch", "parent", "main");
+      git(fixture.root, "push", "origin", "parent");
+      const paths = Object.fromEntries(
+        ["oslo", "lima"].map((name) => {
+          const worktree = NodePath.join(fixture.root, name);
+          git(fixture.root, "worktree", "add", "-b", `fork/${name}`, worktree, "parent");
+          git(worktree, "push", "-u", "origin", "HEAD");
+          return [name, worktree];
+        }),
+      );
+      commit(paths.lima!, "wip.md", "wip\n");
+      const parent = NodePath.join(fixture.root, "parent");
+      git(fixture.root, "worktree", "add", parent, "parent");
+      commit(parent, "parent-1.md", "1\n");
+      commit(parent, "parent-2.md", "2\n");
+      git(parent, "push", "origin", "parent");
+      for (const file of ["main-1.md", "main-2.md", "main-3.md"]) commit(fixture.root, file, "x\n");
+      git(fixture.root, "push", "origin", "main");
+      const bin = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "fork-ws-gh-"));
+      NodeFS.writeFileSync(
+        NodePath.join(bin, "gh"),
+        `#!/bin/sh\necho '{"state":"OPEN","isDraft":true,"mergedAt":null,"baseRefName":"parent"}'\n`,
+        { mode: 0o755 },
+      );
+      const previousPath = process.env.PATH;
+      process.env.PATH = `${bin}${NodePath.delimiter}${previousPath ?? ""}`;
+      const restorePath = () => {
+        process.env.PATH = previousPath;
+      };
+      return Effect.gen(function* () {
+        const store = yield* WorkspaceStore.WorkspaceStore;
+        for (const name of ["oslo", "lima"]) {
+          yield* store.save({
+            workspace: {
+              id: WorkspaceId.make(`ws-${name}`),
+              projectId: fixture.projectId,
+              name,
+              worktreePath: paths[name]!,
+              branch: `fork/${name}`,
+              baseRef: "main",
+              status: "ready",
+              pendingOperation: null,
+              error: null,
+              lastScript: null,
+              setupTerminal: null,
+              runningScripts: [],
+              setupPending: false,
+              checkout: { type: "new", startFromOrigin: true },
+              createdAt: "2026-10-19T00:00:00.000Z",
+              archivedAt: null,
+              lastTurnAt: null,
+              behindBy: null,
+            },
+            archivedThreadIds: [],
+            log: "",
+          });
+        }
+        const service = yield* WorkspaceService.make;
+
+        yield* service.autoUpdateFromBase;
+        const oslo = (yield* service.list).find((workspace) => workspace.name === "oslo");
+        assert.equal(oslo?.baseRef, "parent");
+        assert.equal(oslo?.behindBy, 2);
+
+        const pushed = yield* service.updateFromBase(WorkspaceId.make("ws-oslo"));
+        assert.equal(pushed.outcome, "updated");
+        assert.isTrue(pushed.pushed);
+        assert.equal(git(remote, "rev-parse", "fork/oslo"), git(paths.oslo!, "rev-parse", "HEAD"));
+        assert.isFalse(NodeFS.existsSync(NodePath.join(paths.oslo!, "main-1.md")));
+
+        const held = yield* service.updateFromBase(WorkspaceId.make("ws-lima"));
+        assert.equal(held.outcome, "updated");
+        assert.isFalse(held.pushed);
+        assert.notEqual(
+          git(remote, "rev-parse", "fork/lima"),
+          git(paths.lima!, "rev-parse", "HEAD"),
+        );
+      }).pipe(
+        Effect.ensuring(Effect.sync(restorePath)),
+        Effect.scoped,
+        Effect.provide(WorkspaceStore.layer.pipe(Layer.provideMerge(servicesLayer(fixture)))),
+      );
+    },
+  );
+
   it.effect("never merges the target into a branch whose pull request just merged", () => {
     const fixture = makeFixture();
     const remote = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "fork-ws-origin-"));
@@ -1272,9 +1370,9 @@ describe("WorkspaceService", () => {
       [
         "#!/bin/sh",
         `if [ -e "${mergedMarker}" ]; then`,
-        `  echo '{"state":"MERGED","isDraft":false,"mergedAt":"2026-10-20T00:00:00Z"}'`,
+        `  echo '{"state":"MERGED","isDraft":false,"mergedAt":"2026-10-20T00:00:00Z","baseRefName":"main"}'`,
         "else",
-        `  echo '{"state":"OPEN","isDraft":false,"mergedAt":null}'`,
+        `  echo '{"state":"OPEN","isDraft":false,"mergedAt":null,"baseRefName":"main"}'`,
         "fi",
       ].join("\n"),
       { mode: 0o755 },
@@ -1385,7 +1483,7 @@ describe("WorkspaceService", () => {
         "#!/bin/sh",
         // lima's branch is reused: its pull request merged before the workspace existed.
         'if [ "$(basename "$(pwd)")" = lima ]; then at=2026-10-01; else at=2026-10-20; fi',
-        `echo "{\\"state\\":\\"MERGED\\",\\"isDraft\\":false,\\"mergedAt\\":\\"\${at}T00:00:00Z\\"}"`,
+        `echo "{\\"state\\":\\"MERGED\\",\\"isDraft\\":false,\\"mergedAt\\":\\"\${at}T00:00:00Z\\",\\"baseRefName\\":\\"main\\"}"`,
       ].join("\n"),
       { mode: 0o755 },
     );

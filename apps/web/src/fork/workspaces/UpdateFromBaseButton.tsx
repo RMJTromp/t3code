@@ -32,12 +32,14 @@ function useUpdateFromBase() {
   const command = useAtomCommand(forkWorkspaceEnvironment.command, { reportFailure: false });
   const { newChat, openThread } = useOpenWorkspace();
   return async (environmentId: EnvironmentId, workspace: Workspace) => {
-    const baseRef = workspace.baseRef ?? "the target branch";
     const result = await command({
       environmentId,
       input: { type: "updateFromBase", workspaceId: workspace.id },
     });
     if (isAtomCommandInterrupted(result)) return;
+    const baseRef =
+      (result._tag === "Success" ? result.value.workspace?.baseRef : workspace.baseRef) ??
+      "the target branch";
     if (result._tag !== "Success") {
       const error = asWorkspaceError(squashAtomCommandFailure(result));
       toastManager.add({
@@ -55,6 +57,7 @@ function useUpdateFromBase() {
       toastManager.add({
         type: "success",
         title: `Merged origin/${baseRef} into ${workspace.name}`,
+        ...(result.value.pushed === true ? { description: "Pushed to its pull request." } : {}),
       });
       return;
     }

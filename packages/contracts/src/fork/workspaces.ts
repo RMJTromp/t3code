@@ -244,6 +244,8 @@ export type WorkspaceUpdateOutcome = typeof WorkspaceUpdateOutcome.Type;
 export const WorkspaceCommandResult = Schema.Struct({
   workspace: Schema.NullOr(Workspace),
   update: Schema.optional(WorkspaceUpdateOutcome),
+  /** The merge went to the pull request too. */
+  pushed: Schema.optional(Schema.Boolean),
   /** The chat an agent resolves a `needs-agent` merge in. */
   agentThreadId: Schema.optional(ThreadId),
   issues: Schema.optional(Schema.Array(WorkspaceIssue)),

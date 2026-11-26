@@ -80,11 +80,15 @@ export class WorkspaceService extends Context.Service<
     readonly unarchive: (workspaceId: WorkspaceId) => Effect.Effect<Workspace, WorkspaceError>;
     /** Resumes whatever a restart or failure interrupted. */
     readonly retry: (workspaceId: WorkspaceId) => Effect.Effect<Workspace, WorkspaceError>;
-    /** A merge that conflicts is undone and handed to an agent in a new chat of the workspace. */
+    /**
+     * Merges origin's copy of the target, which follows an open pull request's base. A merge
+     * that conflicts is undone and handed to an agent in a new chat of the workspace.
+     */
     readonly updateFromBase: (workspaceId: WorkspaceId) => Effect.Effect<
       {
         readonly workspace: Workspace;
         readonly outcome: WorkspaceUpdateOutcome;
+        readonly pushed: boolean;
         readonly agentThreadId: ThreadId | null;
       },
       WorkspaceError
@@ -135,6 +139,7 @@ const GhPullRequestState = Schema.Struct({
   state: Schema.String,
   isDraft: Schema.Boolean,
   mergedAt: Schema.NullOr(Schema.String),
+  baseRefName: Schema.String,
 });
 type GhPullRequestState = typeof GhPullRequestState.Type;
 const decodeGhPullRequestState = Schema.decodeUnknownOption(
@@ -681,14 +686,41 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const updateFromBase = (workspaceId: WorkspaceId, options?: { readonly push?: boolean }) =>
+  const isOpen = (pr: Option.Option<GhPullRequestState>) =>
+    Option.exists(pr, ({ state }) => state === "OPEN");
+
+  /** A stacked branch trails the branch its open pull request targets, which can be retargeted. */
+  const followPullRequestBase = Effect.fn("WorkspaceService.followPullRequestBase")(function* (
+    workspace: Workspace,
+    pr: Option.Option<GhPullRequestState>,
+  ) {
+    if (Option.isNone(pr) || pr.value.state !== "OPEN") return workspace;
+    const baseRef = pr.value.baseRefName;
+    if (baseRef === workspace.baseRef) return workspace;
+    yield* fetchBase(workspace.projectId, baseRef).pipe(Effect.ignore);
+    behindSince.delete(workspace.id);
+    const behindBy = yield* countBehind({ ...workspace, baseRef });
+    appendLog(workspace.id, `Its pull request targets ${baseRef}, so the workspace does too.\n`);
+    return yield* update(workspace.id, (current) => ({
+      ...current,
+      workspace: { ...current.workspace, baseRef, behindBy },
+    }));
+  });
+
+  /**
+   * Pushes the merge when the pull request is open and the merge is all there is to push, so
+   * a merge never publishes work in progress.
+   */
+  const updateFromBase = (workspaceId: WorkspaceId, options: { readonly fresh: boolean }) =>
     locked(
       workspaceId,
       Effect.gen(function* () {
-        const { workspace } = yield* get(workspaceId);
-        if (workspace.status !== "ready") {
+        const current = (yield* get(workspaceId)).workspace;
+        if (current.status !== "ready") {
           return yield* workspaceError("invalid-state", "Wait for the workspace to be ready.");
         }
+        const pr = yield* recentPullRequestOf(current, { fresh: options.fresh });
+        const workspace = yield* followPullRequestBase(current, pr);
         const baseRef = workspace.baseRef;
         if (baseRef === null) {
           return yield* workspaceError("invalid-state", "This workspace has no target branch.");
@@ -708,7 +740,12 @@ export const make = Effect.gen(function* () {
           return yield* workspaceError("git-failed", `origin/${baseRef} could not be read.`);
         }
         let outcome: WorkspaceUpdateOutcome = "up-to-date";
+        let push = false;
         if (behindBy > 0) {
+          const cwd = workspace.worktreePath;
+          const status = yield* runGit(cwd, ["status", "--porcelain"]);
+          push =
+            isOpen(pr) && status.ok && status.stdout === "" && !(yield* hasUnpushedCommits(cwd));
           // A merge, not a rebase: the branch may already be pushed or have a pull request.
           const merged = yield* runGit(workspace.worktreePath, [
             "merge",
@@ -722,14 +759,20 @@ export const make = Effect.gen(function* () {
             outcome = "needs-agent";
           }
         }
+        const pushed = outcome === "updated" && push && (yield* pushBranch(workspace));
+        if (outcome === "updated" && push && !pushed) {
+          yield* Effect.logWarning("workspace merged its target branch but could not push", {
+            workspaceId,
+          });
+        }
         const after = yield* countBehind(workspace);
-        const updated = yield* update(workspaceId, (current) => ({
-          ...current,
-          workspace: { ...current.workspace, behindBy: after },
+        const updated = yield* update(workspaceId, (record) => ({
+          ...record,
+          workspace: { ...record.workspace, behindBy: after },
         }));
         const agentThreadId =
           outcome === "needs-agent"
-            ? yield* launchMergeAgent(workspace, baseRef, members, options?.push === true).pipe(
+            ? yield* launchMergeAgent(workspace, baseRef, members, push).pipe(
                 Effect.catchCause((cause) =>
                   Effect.logWarning("workspace merge agent not started", {
                     workspaceId,
@@ -738,9 +781,12 @@ export const make = Effect.gen(function* () {
                 ),
               )
             : null;
-        return { workspace: updated, outcome, agentThreadId };
+        return { workspace: updated, outcome, pushed, agentThreadId };
       }),
     );
+
+  const updateFromBaseNow = (workspaceId: WorkspaceId) =>
+    updateFromBase(workspaceId, { fresh: true });
 
   // Paths of terminals running a command, from the same metadata the clients' red dot reads.
   const busyTerminals = new Map<string, string>();
@@ -769,7 +815,7 @@ export const make = Effect.gen(function* () {
     processRunner
       .run({
         command: "gh",
-        args: ["pr", "view", "--json", "state,isDraft,mergedAt"],
+        args: ["pr", "view", "--json", "state,isDraft,mergedAt,baseRefName"],
         cwd: workspace.worktreePath,
         timeout: "20 seconds",
       })
@@ -912,12 +958,7 @@ export const make = Effect.gen(function* () {
     autoUpdatedTo.set(workspace.id, base.stdout);
     autoMergedAt.set(workspace.id, now);
     behindSince.delete(workspace.id);
-    const { outcome } = yield* updateFromBase(workspace.id, { push: true });
-    if (outcome === "updated" && !(yield* pushBranch(workspace))) {
-      yield* Effect.logWarning("workspace merged its target branch but could not push", {
-        workspaceId: workspace.id,
-      });
-    }
+    yield* updateFromBase(workspace.id, { fresh: false });
   });
 
   // Workspaces whose archive started after their pull request merged, so a failed archive
@@ -957,7 +998,12 @@ export const make = Effect.gen(function* () {
         archiveIfMerged(workspace).pipe(
           Effect.andThen(() => {
             const current = records.get(workspace.id)?.workspace;
-            return current?.status === "ready" ? autoUpdateWorkspace(current) : Effect.void;
+            return current?.status === "ready"
+              ? recentPullRequestOf(current).pipe(
+                  Effect.flatMap((pr) => followPullRequestBase(current, pr)),
+                  Effect.flatMap(autoUpdateWorkspace),
+                )
+              : Effect.void;
           }),
           Effect.catchCause((cause) =>
             Effect.logWarning("workspace auto update skipped", {
@@ -1864,7 +1910,7 @@ export const make = Effect.gen(function* () {
   );
 
   return WorkspaceService.of({
-    updateFromBase,
+    updateFromBase: updateFromBaseNow,
     autoUpdateFromBase,
     runProjectScript,
     setProjectScripts,
